@@ -1,28 +1,30 @@
-from random import random
-from shared.models.card import Card
+import random
+from shared.models.card import Card, Suits, Values
 
 
 class Deck:
     def __init__(self):
         self.cards = []
+        self.init()
 
     def init(self):
+        """Initialize a standard deck of 52 cards"""
         self.cards.clear()
-        for i in range(1,5):
-            for j in range(1,9):
-                card = Card(i,j)
+        for suit in Suits:
+            for value in Values:
+                card = Card(suit, value)
                 self.cards.append(card)
 
     def shuffle(self):
-        counter = 0
-        while counter < len(self.cards):
-            i = random() % len(self.cards)
-            j = random() % len(self.cards)
-            self.swap_values(i,j)
-            counter += 1
+        """Shuffle the deck"""
+        random.shuffle(self.cards)
 
     def draw(self):
+        """Draw a card from the top of the deck"""
+        if not self.cards:
+            return None
         return self.cards.pop()
 
-    def swap_values(self, i, j):
-        self.cards[i], self.cards[j] = self.cards[j], self.cards[i]
+    def cards_remaining(self):
+        """Return the number of cards remaining in the deck"""
+        return len(self.cards)
