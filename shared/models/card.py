@@ -42,9 +42,9 @@ class Card:
 
     def get_value(self):
         """Returns the blackjack value of the card"""
-        if self.value >= 10:
+        if self.value.value >= 10:
             return 10
-        return self.value
+        return self.value.value
 
     def __str__(self):
         return f"{self.value} of {self.suit}"

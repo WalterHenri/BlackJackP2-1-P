@@ -18,6 +18,7 @@ class P2PManager:
         self.on_message_callbacks = []
         self.on_connection_callbacks = []
         self.on_disconnection_callbacks = []
+        self.message_queue = []  # Queue for pending messages
 
     def start(self):
         """Start the P2P network manager"""
@@ -92,10 +93,8 @@ class P2PManager:
                     break
 
                 message = Message.from_json(data.decode('utf-8'))
-
-                # Notify callbacks about message
-                for callback in self.on_message_callbacks:
-                    callback(player_id, message)
+                # Add message to queue instead of processing immediately
+                self.message_queue.append((player_id, message))
 
         except Exception as e:
             print(f"Error handling connection: {str(e)}")
@@ -163,3 +162,11 @@ class P2PManager:
                 pass
 
         self.connections.clear()
+
+    def update(self):
+        """Process any pending network messages"""
+        # Process any messages in the queue
+        while self.message_queue:
+            sender_id, message = self.message_queue.pop(0)
+            for callback in self.on_message_callbacks:
+                callback(sender_id, message)

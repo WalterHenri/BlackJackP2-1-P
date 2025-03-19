@@ -25,6 +25,11 @@ class Deck:
             return None
         return self.cards.pop()
 
+    def return_card(self, card):
+        """Return a card to the deck and shuffle"""
+        self.cards.append(card)
+        self.shuffle()
+
     def cards_remaining(self):
         """Return the number of cards remaining in the deck"""
         return len(self.cards)

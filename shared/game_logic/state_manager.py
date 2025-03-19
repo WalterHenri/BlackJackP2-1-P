@@ -51,6 +51,8 @@ class GameStateManager:
     def start_player_turns(self):
         """Start player turns after initial dealing"""
         self.state = GameState.PLAYER_TURN
+        # Make sure we start with the first player
+        self.current_player_index = 0
         return True
 
     def next_player(self):
@@ -60,16 +62,22 @@ class GameStateManager:
 
         self.current_player_index = (self.current_player_index + 1) % len(self.players)
 
-        # If we've gone around to all players, end the game
-        if self.current_player_index == self.dealer_index:
-            self.state = GameState.GAME_OVER
+        # If we've gone through all players, end the game
+        if self.current_player_index == 0:
             return False
+
+        # Skip players who are busted or standing
+        while (self.current_player_index < len(self.players) and 
+               not self.players[self.current_player_index].can_hit()):
+            self.current_player_index += 1
+            if self.current_player_index >= len(self.players):
+                return False
 
         return True
 
     def get_current_player(self):
         """Get the current player object"""
-        if not self.players:
+        if not self.players or self.current_player_index >= len(self.players):
             return None
         return self.players[self.current_player_index]
 

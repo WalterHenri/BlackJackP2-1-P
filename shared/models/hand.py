@@ -11,15 +11,18 @@ class Hand:
             self.is_busted = True
             self.is_active = False
 
+    def would_be_21(self, card):
+        """Check if adding this card would result in 21"""
+        total = self.get_value() + card.get_value()
+        return total == 21
+
     def get_value(self):
         """Calculate the total value of the hand"""
-        total = sum(card.get_value() for card in self.cards)
+        total = 0
 
-        # Handle Aces (value 1 could be 11 if it doesn't cause a bust)
-        aces = sum(1 for card in self.cards if card.value.value == 1)
-        while aces > 0 and total + 10 <= 21:
-            total += 10
-            aces -= 1
+        # Sum up all cards, with Aces worth 1
+        for card in self.cards:
+            total += card.get_value()
 
         return total
 

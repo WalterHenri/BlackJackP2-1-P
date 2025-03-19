@@ -70,12 +70,22 @@ class Game:
         if self.state_manager.state != GameState.DEALING:
             return False
 
-        # Deal 2 cards to each player
+        # Deal 1 card at a time to each player
         for _ in range(2):
             for player in self.state_manager.players:
                 card = self.deck.draw()
                 if card:
                     player.hand.add_card(card)
+                    # Check if player got 21 with initial cards (should not happen)
+                    if player.hand.get_value() == 21:
+                        # Redraw the second card
+                        self.deck.return_card(card)
+                        new_card = self.deck.draw()
+                        while new_card and player.hand.would_be_21(new_card):
+                            self.deck.return_card(new_card)
+                            new_card = self.deck.draw()
+                        if new_card:
+                            player.hand.cards[-1] = new_card
 
         self.state_manager.start_player_turns()
         return True
@@ -129,22 +139,18 @@ class Game:
 
     def _end_round(self):
         """End the current round and determine winners"""
-        winners, best_score = self.state_manager.end_game()
+        winners, best_score = self.state_manager.find_winner()
 
         # Process wins/losses
         for player in self.state_manager.players:
             if player in winners:
                 self.bet_manager.process_winner(player)
+                self.messages.append(f"{player.name} ganhou com {player.hand.get_value()} pontos!")
             else:
                 player.lose()
+                self.messages.append(f"{player.name} perdeu com {player.hand.get_value()} pontos.")
 
-        # Add game result message
-        if winners:
-            winner_names = ", ".join(winner.name for winner in winners)
-            self.messages.append(f"Round over! Winner(s): {winner_names} with score {best_score}")
-        else:
-            self.messages.append("Round over! No winners - all players busted.")
-
+        self.state_manager.state = GameState.GAME_OVER
         return winners
 
     def start_new_round(self):
@@ -182,9 +188,9 @@ class Game:
                     "balance": player.balance,
                     "current_bet": player.current_bet,
                     "is_host": player.is_host,
-                    "hand_value": player.hand.get_value(),
-                    "is_busted": player.hand.is_busted,
-                    "cards": [{"suit": card.suit.name, "value": card.value.name} for card in player.hand.cards]
+                    "hand_value": player.hand.get_value() if player.hand else 0,
+                    "is_busted": player.hand.is_busted if player.hand else False,
+                    "hand": [{"suit": card.suit.name, "value": card.value.name} for card in player.hand.cards]
                 }
                 for player in self.state_manager.players
             ],
