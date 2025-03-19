@@ -1,1 +1,1 @@
-{"Walter": 600}
+{"Walter": 600, "Player": 100}

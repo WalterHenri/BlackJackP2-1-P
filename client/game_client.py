@@ -94,6 +94,9 @@ class BlackjackClient:
         # Carregar sprites das cartas
         self.card_sprites = CardSprites()
 
+        # Adicionar variável para controlar a exibição do pop-up de tutorial
+        self.show_tutorial = False
+
     def start(self):
         """Iniciar o loop principal do jogo"""
         self.running = True
@@ -139,79 +142,93 @@ class BlackjackClient:
 
     def handle_menu_event(self, event):
         """Lidar com eventos na tela do menu"""
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            mouse_pos = pygame.mouse.get_pos()
-            
-            # Verificar se clicou no campo de nome
-            name_box = pygame.Rect(300, 180, 300, 40)
-            if name_box.collidepoint(mouse_pos):
-                self.name_input_active = True
-                # Se o nome for o padrão, limpar ao clicar
-                if self.player_name == "Player":
-                    self.player_name = ""
-            else:
-                # Se clicou fora do campo, desativa o modo de edição
-                # e atualiza o saldo com o novo nome
-                if self.name_input_active:
-                    self.name_input_active = False
-                    # Se o nome estiver vazio, volta para o padrão
-                    if not self.player_name:
-                        self.player_name = "Player"
-                    # Atualiza o saldo com o novo nome
-                    self.player_balance = get_player_balance(self.player_name)
-                    print(f"Nome atualizado para: {self.player_name}, saldo: {self.player_balance}")
-            
-            # Verificar cliques nos botões do menu
-            y_offset = 320
-            
-            # Seção Modo Solo
-            y_offset += 40  # Espaço para o título
-            solo_button = pygame.Rect(SCREEN_WIDTH // 2 - 150, y_offset, 300, 50)
-            if solo_button.collidepoint(mouse_pos):
+        # Verificar clique no botão Jogar Sozinho
+        play_alone_rect = pygame.Rect((SCREEN_WIDTH - 250) // 2, 280, 250, 50)
+        if event.type == pygame.MOUSEBUTTONDOWN and play_alone_rect.collidepoint(event.pos):
+            # Verificar se o campo de nome está ativo antes de prosseguir
+            if not self.name_input_active:
                 self.handle_solo_click()
                 return
-            
-            # Seção Modo Multiplayer
-            y_offset += 60 + 20 + 40  # Botão + espaço entre seções + título
-            
-            # Botão Jogar Online
-            online_button = pygame.Rect(SCREEN_WIDTH // 2 - 150, y_offset, 300, 50)
-            if online_button.collidepoint(mouse_pos):
+        
+        # Verificar clique no botão Jogar Online
+        play_online_rect = pygame.Rect((SCREEN_WIDTH - 250) // 2, 280 + 50 + 20, 250, 50)
+        if event.type == pygame.MOUSEBUTTONDOWN and play_online_rect.collidepoint(event.pos):
+            # Verificar se o campo de nome está ativo antes de prosseguir
+            if not self.name_input_active:
                 self.handle_online_click()
                 return
-            
-            y_offset += 60
-            # Botão Jogar em Rede Local
-            local_button = pygame.Rect(SCREEN_WIDTH // 2 - 150, y_offset, 300, 50)
-            if local_button.collidepoint(mouse_pos):
+                
+        # Verificar clique no botão Jogar na Rede Local
+        play_local_rect = pygame.Rect((SCREEN_WIDTH - 250) // 2, 280 + 2 * (50 + 20), 250, 50)
+        if event.type == pygame.MOUSEBUTTONDOWN and play_local_rect.collidepoint(event.pos):
+            # Verificar se o campo de nome está ativo antes de prosseguir
+            if not self.name_input_active:
                 self.handle_local_network_click()
                 return
+                
+        # Verificar clique no botão Sair
+        exit_rect = pygame.Rect((SCREEN_WIDTH - 250) // 2, 280 + 3 * (50 + 20), 250, 50)
+        if event.type == pygame.MOUSEBUTTONDOWN and exit_rect.collidepoint(event.pos):
+            # Salvar o saldo do jogador antes de sair
+            update_player_balance(self.player_name, self.player_balance)
+            pygame.quit()
+            sys.exit()
             
-            y_offset += 60
-            # Botão Criar Sala
-            create_room_button = pygame.Rect(SCREEN_WIDTH // 2 - 150, y_offset, 300, 50)
-            if create_room_button.collidepoint(mouse_pos):
-                self.handle_create_room_click()
-                return
+        # Manipular eventos do campo de nome
+        name_input_rect = pygame.Rect(SCREEN_WIDTH // 2 - 90, 150, 180, 30)
+        
+        # Verifica clique no campo de nome
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            # Verificar se o clique foi dentro do campo de nome
+            if name_input_rect.collidepoint(event.pos):
+                # Ativar o campo de nome
+                self.name_input_active = True
+                if self.player_name == "Player" or self.player_name == "":
+                    self.player_name = ""  # Limpar o nome padrão
+            else:
+                # Se o clique foi fora do campo e o campo estava ativo, desativar e atualizar o saldo
+                if self.name_input_active:
+                    self.name_input_active = False
+                    # Se o nome ficou vazio, voltar para "Player"
+                    if self.player_name == "":
+                        self.player_name = "Player"
+                    # Atualizar o saldo após mudar o nome
+                    old_balance = self.player_balance
+                    self.player_balance = get_player_balance(self.player_name)
+                    print(f"Nome atualizado para: {self.player_name}, saldo atualizado de {old_balance} para {self.player_balance}")
             
-            y_offset += 60
-            # Botão Buscar Salas
-            find_rooms_button = pygame.Rect(SCREEN_WIDTH // 2 - 150, y_offset, 300, 50)
-            if find_rooms_button.collidepoint(mouse_pos):
-                self.handle_find_rooms_click()
-                return
+        # Manipular teclas para o campo de nome
+        if event.type == pygame.KEYDOWN:
+            if self.name_input_active:
+                if event.key == pygame.K_RETURN:
+                    # Confirmar o nome com a tecla Enter
+                    self.name_input_active = False
+                    if self.player_name == "":
+                        self.player_name = "Player"
+                    # Atualizar o saldo após confirmar o nome
+                    old_balance = self.player_balance
+                    self.player_balance = get_player_balance(self.player_name)
+                    print(f"Nome confirmado: {self.player_name}, saldo atualizado de {old_balance} para {self.player_balance}")
+                elif event.key == pygame.K_BACKSPACE:
+                    # Apagar o último caractere
+                    self.player_name = self.player_name[:-1]
+                else:
+                    # Limitar o nome a 20 caracteres
+                    if len(self.player_name) < 20:
+                        self.player_name = self.player_name + event.unicode
 
-        # Permitir edição do nome do jogador
-        elif event.type == pygame.KEYDOWN and self.name_input_active:
-            if event.key == pygame.K_BACKSPACE:
-                self.player_name = self.player_name[:-1]
-            elif event.key == pygame.K_RETURN:
-                self.name_input_active = False
-                # Atualizar saldo ao finalizar a edição do nome
-                self.player_balance = get_player_balance(self.player_name)
-            elif len(self.player_name) < 20:  # Limitar tamanho do nome
-                if event.unicode.isprintable():  # Apenas caracteres imprimíveis
-                    self.player_name = self.player_name + event.unicode
+        # Verificar clique no botão de ajuda
+        help_button = pygame.Rect(SCREEN_WIDTH - 50, 20, 40, 40)
+        if event.type == pygame.MOUSEBUTTONDOWN and help_button.collidepoint(event.pos):
+            self.show_tutorial = not self.show_tutorial
+            return
+            
+        # Se o tutorial estiver aberto e o usuário clicar fora dele, fechar o tutorial
+        if self.show_tutorial and event.type == pygame.MOUSEBUTTONDOWN:
+            tutorial_rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2 - 150, 400, 300)
+            if not tutorial_rect.collidepoint(event.pos):
+                self.show_tutorial = False
+                return
 
     def handle_solo_click(self):
         """Manipular clique no botão Jogar Sozinho"""
@@ -472,144 +489,190 @@ class BlackjackClient:
 
     def render_menu(self):
         """Renderizar a tela do menu"""
-        # Background com gradiente verde escuro
-        self.screen.fill((0, 40, 0))  # Verde escuro base
+        # Desenhar o fundo com gradiente
+        self.screen.fill((0, 100, 0))  # Verde escuro para o fundo
         
-        # Área do título com fundo mais escuro
-        title_bg = pygame.Rect(0, 0, SCREEN_WIDTH, 150)
-        pygame.draw.rect(self.screen, (0, 30, 0), title_bg)
+        # Desenhar área do título
+        title_bg = pygame.Rect(0, 0, SCREEN_WIDTH, 120)
+        pygame.draw.rect(self.screen, (0, 80, 0), title_bg)
         
-        # Título com sombra
-        title_shadow = self.title_font.render("Blackjack 21 P2P", True, (0, 30, 0))
+        # Desenhar título do jogo
         title = self.title_font.render("Blackjack 21 P2P", True, (240, 240, 240))
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 75))
-        self.screen.blit(title_shadow, (title_rect.x + 2, title_rect.y + 2))
+        title_shadow = self.title_font.render("Blackjack 21 P2P", True, (0, 40, 0))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 60))
+        shadow_rect = title_shadow.get_rect(center=(SCREEN_WIDTH // 2 + 2, 62))
+        self.screen.blit(title_shadow, shadow_rect)
         self.screen.blit(title, title_rect)
-
-        # Nome do jogador com visual melhorado
-        name_label = self.medium_font.render("Seu nome:", True, (220, 220, 220))
-        name_label_rect = name_label.get_rect(x=100, centery=200)
-        self.screen.blit(name_label, name_label_rect)
-
-        # Campo de nome com borda arredondada e indicador de foco
-        name_box = pygame.Rect(300, 180, 300, 40)
         
-        # Efeito de foco no campo de nome
-        is_mouse_over_name = name_box.collidepoint(pygame.mouse.get_pos())
+        # Não carregar o saldo toda vez - usar o valor já armazenado em self.player_balance
         
-        # Cor da borda baseada no estado de foco
+        # Campo de nome
+        name_label = self.medium_font.render("Nome:", True, WHITE)
+        self.screen.blit(name_label, (SCREEN_WIDTH // 2 - 150, 150))
+        
+        # Desenhar campo de nome com borda que muda de cor baseado no foco
+        name_input_rect = pygame.Rect(SCREEN_WIDTH // 2 - 90, 150, 180, 30)
+        mouse_pos = pygame.mouse.get_pos()
+        hover_name_input = name_input_rect.collidepoint(mouse_pos)
+        
+        # Determinar a cor da borda baseado no estado do input
         if self.name_input_active:
-            border_color = (100, 200, 255)  # Azul quando ativo
-        elif is_mouse_over_name:
-            border_color = (150, 150, 255)  # Azul claro quando mouse está por cima
+            border_color = (0, 120, 255)  # Azul quando ativo
+        elif hover_name_input:
+            border_color = (100, 180, 255)  # Azul claro quando o mouse está em cima
         else:
-            border_color = (0, 60, 0)       # Verde escuro padrão
+            border_color = (0, 80, 0)  # Verde escuro quando inativo
         
-        pygame.draw.rect(self.screen, border_color, name_box, border_radius=10)  # Borda externa
-        pygame.draw.rect(self.screen, (240, 240, 240), name_box, 0, border_radius=10)  # Campo branco
+        # Desenhar campo de texto com cantos arredondados
+        pygame.draw.rect(self.screen, WHITE, name_input_rect, border_radius=5)
+        pygame.draw.rect(self.screen, border_color, name_input_rect, 2, border_radius=5)
         
-        # Renderizar o nome com cursor piscante se estiver com foco
-        cursor = "|" if self.name_input_active and pygame.time.get_ticks() % 1000 < 500 else ""
-        name_text = self.medium_font.render(self.player_name + cursor, True, (0, 0, 0))
-        self.screen.blit(name_text, (310, name_box.centery - name_text.get_height() // 2))
+        # Texto dentro do campo
+        if self.player_name == "":
+            name_text = self.small_font.render("Player", True, GRAY)
+            self.screen.blit(name_text, (name_input_rect.x + 10, name_input_rect.y + 8))
+        else:
+            name_text = self.small_font.render(self.player_name, True, BLACK)
+            text_rect = name_text.get_rect(midleft=(name_input_rect.x + 10, name_input_rect.centery))
+            self.screen.blit(name_text, text_rect)
         
-        # Texto de instrução para o campo de nome
-        name_hint = self.small_font.render("Clique e digite para mudar seu nome", True, (180, 180, 180))
-        self.screen.blit(name_hint, (300, name_box.bottom + 5))
-
-        # Saldo inicial com visual melhorado - agora mostra o saldo persistente
-        balance_label = self.medium_font.render(f"Seu saldo: {self.player_balance}", True, (220, 220, 220))
-        balance_rect = balance_label.get_rect(x=100, centery=270)
-        self.screen.blit(balance_label, balance_rect)
+        # Adicionar cursor piscante quando o campo estiver ativo
+        if self.name_input_active and pygame.time.get_ticks() % 1000 < 500:
+            cursor_pos = name_input_rect.x + 10 + name_text.get_width()
+            pygame.draw.line(self.screen, BLACK, 
+                            (cursor_pos, name_input_rect.y + 5), 
+                            (cursor_pos, name_input_rect.y + 25), 2)
         
-        # Mensagem informativa sobre o saldo
+        # Texto de ajuda abaixo do campo de nome
+        hint_text = self.small_font.render("Clique para mudar seu nome", True, (200, 200, 200))
+        self.screen.blit(hint_text, (SCREEN_WIDTH // 2 - 90, 185))
+        
+        # Exibir saldo do jogador
+        balance_label = self.medium_font.render(f"Saldo: {self.player_balance} moedas", True, WHITE)
+        self.screen.blit(balance_label, (SCREEN_WIDTH // 2 - 150, 220))
+        
+        # Aviso de saldo baixo
         if self.player_balance <= 100:
-            info_text = self.small_font.render("* Saldo baixo! Cuidado para não ser eliminado.", True, (255, 150, 150))
-            self.screen.blit(info_text, (300, 270))
-
-        def draw_menu_button(rect, text, color, hover_color=(0, 120, 255)):
-            """Desenhar botão do menu com efeito hover e borda arredondada"""
-            mouse_pos = pygame.mouse.get_pos()
-            is_hover = rect.collidepoint(mouse_pos)
-            
-            # Sombra do botão
-            shadow_rect = rect.copy()
-            shadow_rect.y += 2
-            pygame.draw.rect(self.screen, (0, 0, 0, 128), shadow_rect, border_radius=15)
-            
-            # Botão
-            current_color = hover_color if is_hover else color
-            pygame.draw.rect(self.screen, current_color, rect, border_radius=15)
-            
-            # Borda brilhante
-            if is_hover:
-                pygame.draw.rect(self.screen, (255, 255, 255, 128), rect, 2, border_radius=15)
-            
-            # Texto centralizado
-            text_surface = self.medium_font.render(text, True, (240, 240, 240))
-            text_rect = text_surface.get_rect(center=rect.center)
-            self.screen.blit(text_surface, text_rect)
-
-        # Botões com cores diferentes e efeitos
-        button_colors = [
-            ((0, 100, 200), (0, 140, 255)),  # Azul para Jogar Sozinho
-            ((0, 150, 100), (0, 190, 130)),  # Verde para Modo Online
-            ((0, 130, 150), (0, 170, 190)),  # Azul-verde para Rede Local
-            ((150, 100, 0), (190, 130, 0))   # Laranja para Criar Sala
-        ]
-
-        # Novos botões organizados em seções
-        sections = [
-            {"title": "Modo Solo", "buttons": [
-                ("Jogar Sozinho", button_colors[0], self.handle_solo_click)
-            ]},
-            {"title": "Modo Multiplayer", "buttons": [
-                ("Jogar Online", button_colors[1], self.handle_online_click),
-                ("Jogar em Rede Local", button_colors[2], self.handle_local_network_click),
-                ("Criar Sala", button_colors[3], self.handle_create_room_click),
-                ("Buscar Salas", button_colors[0], self.handle_find_rooms_click)
-            ]}
+            warning_text = self.small_font.render("Saldo baixo!", True, (255, 100, 100))
+            self.screen.blit(warning_text, (SCREEN_WIDTH // 2 + 100, 220))
+        
+        # Desenhar botões do menu
+        self.draw_menu_buttons()
+        
+        # Botão de ajuda no canto superior direito
+        help_button = pygame.Rect(SCREEN_WIDTH - 50, 20, 40, 40)
+        mouse_pos = pygame.mouse.get_pos()
+        help_color = (0, 120, 200) if help_button.collidepoint(mouse_pos) else (0, 80, 160)
+        pygame.draw.rect(self.screen, help_color, help_button, border_radius=20)
+        pygame.draw.rect(self.screen, WHITE, help_button, 2, border_radius=20)
+        help_text = self.medium_font.render("?", True, WHITE)
+        help_rect = help_text.get_rect(center=help_button.center)
+        self.screen.blit(help_text, help_rect)
+        
+        # Exibir tutorial em pop-up se ativado
+        if self.show_tutorial:
+            self.render_tutorial_popup()
+    
+    def render_tutorial_popup(self):
+        """Renderiza o pop-up de tutorial"""
+        # Fundo semi-transparente para destacar o pop-up
+        s = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 128))  # Preto semi-transparente
+        self.screen.blit(s, (0, 0))
+        
+        # Desenhar o pop-up
+        popup_rect = pygame.Rect(SCREEN_WIDTH // 2 - 250, SCREEN_HEIGHT // 2 - 200, 500, 400)
+        pygame.draw.rect(self.screen, (0, 80, 0), popup_rect, border_radius=10)
+        pygame.draw.rect(self.screen, WHITE, popup_rect, 3, border_radius=10)
+        
+        # Título do tutorial
+        title = self.medium_font.render("Como Jogar Blackjack", True, WHITE)
+        title_rect = title.get_rect(midtop=(popup_rect.centerx, popup_rect.y + 20))
+        self.screen.blit(title, title_rect)
+        
+        # Linha separadora
+        pygame.draw.line(self.screen, WHITE, 
+                        (popup_rect.x + 20, popup_rect.y + 50), 
+                        (popup_rect.x + popup_rect.width - 20, popup_rect.y + 50), 2)
+        
+        # Texto do tutorial
+        tutorial_texts = [
+            "Objetivo: Chegue o mais próximo possível de 21 pontos sem passar.",
+            "Cartas numéricas valem seu número, figuras (J,Q,K) valem 10,",
+            "e Ases podem valer 1 ou 11, conforme for melhor para a mão.",
+            "",
+            "Ações:",
+            "- Hit: Peça mais uma carta.",
+            "- Stand: Mantenha sua mão e passe a vez.",
+            "- Apostar: Defina o valor da sua aposta no início de cada rodada.",
+            "",
+            "O dealer pega cartas até atingir pelo menos 17 pontos.",
+            "Se você ultrapassar 21, perde automaticamente (estouro).",
+            "Se o dealer estourar, você ganha.",
+            "Se ninguém estourar, ganha quem tiver o valor mais alto."
         ]
         
-        y_offset = 320
-        for section in sections:
-            # Título da seção
-            section_title = self.medium_font.render(section["title"], True, (220, 220, 220))
-            title_rect = section_title.get_rect(x=SCREEN_WIDTH // 2 - 150, y=y_offset)
-            self.screen.blit(section_title, title_rect)
-            y_offset += 40
-            
-            # Botões da seção
-            for button_text, (color, hover_color), _ in section["buttons"]:
-                button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 150, y_offset, 300, 50)
-                draw_menu_button(button_rect, button_text, color, hover_color)
-                y_offset += 60
-            
-            y_offset += 20  # Espaço entre seções
-
-        # Área de instruções com fundo semi-transparente
-        instructions_bg = pygame.Rect(50, 640, SCREEN_WIDTH - 100, 120)
-        pygame.draw.rect(self.screen, (0, 50, 0), instructions_bg, border_radius=15)
-        pygame.draw.rect(self.screen, (0, 80, 0), instructions_bg, 2, border_radius=15)
-
-        # Título das instruções
-        instructions_title = self.medium_font.render("Como Jogar", True, (220, 220, 220))
-        title_rect = instructions_title.get_rect(centerx=SCREEN_WIDTH // 2, y=650)
-        self.screen.blit(instructions_title, title_rect)
-
-        # Instruções com melhor espaçamento e formatação
-        instructions = [
-            "• Solo: Jogue contra bots com diferentes estratégias",
-            "• Online: Jogue com amigos pela internet usando um servidor online",
-            "• Rede Local: Conecte-se diretamente com jogadores em sua rede local"
-        ]
-
-        y_pos = 680
-        for instruction in instructions:
-            text = self.small_font.render(instruction, True, (200, 200, 200))
-            text_rect = text.get_rect(x=70, y=y_pos)
-            self.screen.blit(text, text_rect)
+        y_pos = popup_rect.y + 60
+        for text in tutorial_texts:
+            rendered_text = self.small_font.render(text, True, WHITE)
+            text_rect = rendered_text.get_rect(topleft=(popup_rect.x + 30, y_pos))
+            self.screen.blit(rendered_text, text_rect)
             y_pos += 25
+        
+        # Botão de fechar
+        close_text = self.small_font.render("Clique em qualquer lugar para fechar", True, (200, 200, 200))
+        close_rect = close_text.get_rect(midbottom=(popup_rect.centerx, popup_rect.bottom - 15))
+        self.screen.blit(close_text, close_rect)
+    
+    def draw_menu_buttons(self):
+        """Desenha os botões do menu principal"""
+        # Função auxiliar para desenhar botões
+        def draw_menu_button(rect, text, color, hover_color=(0, 120, 255)):
+            mouse_pos = pygame.mouse.get_pos()
+            button_color = hover_color if rect.collidepoint(mouse_pos) else color
+            
+            # Desenhar botão com cantos arredondados
+            pygame.draw.rect(self.screen, button_color, rect, border_radius=10)
+            pygame.draw.rect(self.screen, WHITE, rect, 2, border_radius=10)
+            
+            # Texto do botão
+            button_text = self.medium_font.render(text, True, WHITE)
+            text_rect = button_text.get_rect(center=rect.center)
+            self.screen.blit(button_text, text_rect)
+        
+        # Posicionamento dos botões
+        button_width = 250
+        button_height = 50
+        button_spacing = 20
+        start_y = 280
+        
+        # Botão Jogar Sozinho
+        play_alone_rect = pygame.Rect((SCREEN_WIDTH - button_width) // 2, 
+                                      start_y, 
+                                      button_width, 
+                                      button_height)
+        draw_menu_button(play_alone_rect, "Jogar Sozinho", (0, 100, 0), (0, 150, 0))
+        
+        # Botão Jogar Online
+        play_online_rect = pygame.Rect((SCREEN_WIDTH - button_width) // 2, 
+                                       start_y + button_height + button_spacing, 
+                                       button_width, 
+                                       button_height)
+        draw_menu_button(play_online_rect, "Jogar Online", (0, 80, 150), (0, 100, 200))
+        
+        # Botão Jogar na Rede Local
+        play_local_rect = pygame.Rect((SCREEN_WIDTH - button_width) // 2, 
+                                      start_y + 2 * (button_height + button_spacing), 
+                                      button_width, 
+                                      button_height)
+        draw_menu_button(play_local_rect, "Jogar na Rede Local", (150, 100, 0), (200, 130, 0))
+        
+        # Botão Sair
+        exit_rect = pygame.Rect((SCREEN_WIDTH - button_width) // 2, 
+                                start_y + 3 * (button_height + button_spacing), 
+                                button_width, 
+                                button_height)
+        draw_menu_button(exit_rect, "Sair", (150, 0, 0), (200, 0, 0))
 
     def render_lobby(self):
         """Renderizar a tela de lobby"""
