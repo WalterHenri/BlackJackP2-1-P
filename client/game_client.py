@@ -2421,3 +2421,215 @@ class BlackjackClient:
             self.error_message = "Não foi possível conectar à sala. Tente novamente."
             self.message_timer = pygame.time.get_ticks()
 
+    def connect_to_online_room(self, room_id, password=""):
+        """Conectar a uma sala online usando o ID da sala"""
+        # Verificar se o ID da sala foi informado
+        if not room_id:
+            self.error_message = "ID da sala não informado"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Obter informações da sala do serviço de matchmaking
+        success, room_info = self.matchmaking_service.get_room_info(room_id)
+        if not success:
+            self.error_message = "Sala não encontrada"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Verificar senha se necessário
+        if room_info.get("has_password", False) and room_info.get("password") != password:
+            self.error_message = "Senha incorreta"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Obter endereço do host
+        host_address = room_info.get("host_address")
+        if not host_address:
+            self.error_message = "Endereço do host não disponível"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Configurar conexão P2P como cliente
+        self.p2p_manager = P2PManager(host=False)
+        self.p2p_manager.register_message_callback(self.on_message_received)
+        self.p2p_manager.register_connection_callback(self.on_player_connected)
+        self.p2p_manager.register_disconnection_callback(self.on_player_disconnected)
+        self.p2p_manager.start()
+        
+        # Conectar ao host
+        connect_success, connection_message = self.p2p_manager.connect_to_host(host_address)
+        if not connect_success:
+            self.error_message = f"Erro ao conectar ao host: {connection_message}"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Enviar solicitação para entrar na sala
+        join_message = Message.create_join_request(
+            self.player.player_id,
+            self.player.name,
+            password=password
+        )
+        self.p2p_manager.send_message(join_message)
+        
+        # Juntar-se ao jogo no serviço de matchmaking
+        self.matchmaking_service.join_game(room_id, self.player_name)
+        
+        # Aguardar resposta do host (será tratada em on_message_received)
+        self.room_id = room_id
+        return True
+
+    def connect_to_local_room(self, room_id, password=""):
+        """Conectar a uma sala na rede local usando o ID da sala"""
+        # Verificar se o ID da sala foi informado
+        if not room_id:
+            self.error_message = "ID da sala não informado"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Obter informações da sala localmente via broadcast UDP
+        success, room_info = self.matchmaking_service.get_local_room_info(room_id)
+        if not success:
+            self.error_message = "Sala não encontrada na rede local"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Verificar senha se necessário
+        if room_info.get("has_password", False) and room_info.get("password") != password:
+            self.error_message = "Senha incorreta"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Obter endereço do host
+        host_address = room_info.get("host_address")
+        if not host_address:
+            self.error_message = "Endereço do host não disponível"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Configurar conexão P2P como cliente
+        self.p2p_manager = P2PManager(host=False, local_network=True)
+        self.p2p_manager.register_message_callback(self.on_message_received)
+        self.p2p_manager.register_connection_callback(self.on_player_connected)
+        self.p2p_manager.register_disconnection_callback(self.on_player_disconnected)
+        self.p2p_manager.start()
+        
+        # Conectar ao host
+        connect_success, connection_message = self.p2p_manager.connect_to_host(host_address)
+        if not connect_success:
+            self.error_message = f"Erro ao conectar ao host: {connection_message}"
+            self.message_timer = pygame.time.get_ticks()
+            return False
+        
+        # Enviar solicitação para entrar na sala
+        join_message = Message.create_join_request(
+            self.player.player_id,
+            self.player.name,
+            password=password
+        )
+        self.p2p_manager.send_message(join_message)
+        
+        # Registrar entrada no jogo local
+        self.matchmaking_service.join_local_game(room_id, self.player_name)
+        
+        # Aguardar resposta do host (será tratada em on_message_received)
+        self.room_id = room_id
+        return True
+
+    def handle_join_room_event(self, event):
+        """Manipular eventos na tela de juntar-se a uma sala"""
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_pos = pygame.mouse.get_pos()
+            form_x = SCREEN_WIDTH // 2 - 250
+            form_y = 150
+            
+            # Ativar/desativar campos de entrada
+            # Campo ID da Sala
+            id_box = pygame.Rect(form_x + 30, form_y + 70, 440, 40)
+            if id_box.collidepoint(mouse_pos):
+                self.room_id_input_active = True
+                self.password_input_active = False
+            
+            # Campo Senha
+            password_box = pygame.Rect(form_x + 30, form_y + 170, 440, 40)
+            if password_box.collidepoint(mouse_pos):
+                self.password_input_active = True
+                self.room_id_input_active = False
+            
+            # Botões de modo de conexão
+            y_offset = form_y + 250
+            online_rect = pygame.Rect(form_x + 30, y_offset + 40, 200, 40)
+            local_rect = pygame.Rect(form_x + 270, y_offset + 40, 200, 40)
+            
+            if online_rect.collidepoint(mouse_pos):
+                self.connection_mode_selection = "online"
+            elif local_rect.collidepoint(mouse_pos):
+                self.connection_mode_selection = "local"
+            
+            # Botão Buscar Salas
+            button_width = 200
+            button_height = 50
+            button_y = 500
+            browse_button = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
+            if browse_button.collidepoint(mouse_pos):
+                self.current_view = "room_browser"
+                self.connection_mode = self.connection_mode_selection
+                self.load_room_list(mode=self.connection_mode)
+                return
+            
+            # Botão Entrar
+            join_button = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
+            if join_button.collidepoint(mouse_pos):
+                self.join_room_by_id()
+                return
+            
+            # Botão Cancelar
+            cancel_button = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
+            if cancel_button.collidepoint(mouse_pos):
+                self.current_view = "menu"
+                return
+                
+        # Entrada de teclado para os campos ativos
+        elif event.type == pygame.KEYDOWN:
+            if self.room_id_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    self.room_id_input = self.room_id_input[:-1]
+                elif event.key == pygame.K_RETURN:
+                    self.room_id_input_active = False
+                elif len(self.room_id_input) < 8:  # Limitar tamanho do ID
+                    if event.unicode.isdigit():  # Aceitar apenas dígitos
+                        self.room_id_input += event.unicode
+            elif self.password_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    self.password_input = self.password_input[:-1]
+                elif event.key == pygame.K_RETURN:
+                    self.password_input_active = False
+                elif len(self.password_input) < 20:  # Limitar tamanho da senha
+                    if event.unicode.isprintable():
+                        self.password_input += event.unicode
+
+    def join_room_by_id(self):
+        """Entrar na sala usando o ID digitado"""
+        if not self.room_id_input:
+            self.error_message = "Digite o ID da sala"
+            self.message_timer = pygame.time.get_ticks()
+            return
+        
+        # Criar o jogador
+        self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
+        
+        # Conectar à sala baseado no modo selecionado
+        success = False
+        if self.connection_mode_selection == "online":
+            success = self.connect_to_online_room(self.room_id_input, self.password_input)
+        else:
+            success = self.connect_to_local_room(self.room_id_input, self.password_input)
+        
+        if success:
+            self.current_view = "lobby"
+            self.host_mode = False
+            self.success_message = "Conectado à sala com sucesso!"
+            self.message_timer = pygame.time.get_ticks()
+        else:
+            # Mensagem de erro será definida pelas funções de conexão
+            self.message_timer = pygame.time.get_ticks()
+
