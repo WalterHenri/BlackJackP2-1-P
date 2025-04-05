@@ -364,11 +364,11 @@ class BlackjackClient:
         if self.player and hasattr(self.player, 'balance'):
             update_player_balance(self.player_name, self.player.balance)
             print(f"Salvando saldo final: {self.player_name} = {self.player.balance}")
-
+        
         # Fechar conexão P2P se existir (REMOVER SE P2P NÃO FOR MAIS USADO)
         if hasattr(self, 'p2p_manager') and self.p2p_manager:
             self.p2p_manager.close()
-
+            
         # Fechar conexão WebSocket se existir
         if self.websocket_client:
             # Precisa de um método close assíncrono?
@@ -672,7 +672,8 @@ class BlackjackClient:
         else:
              # Se já conectado, apenas vai para o browser e pede a lista
              print("Já conectado ao WebSocket.")
-             self.current_view = "room_browser"
+             # CORRIGIR INDENTAÇÃO: Alinhar com print acima
+             self.current_view = "room_browser" 
              self.send_websocket_message("LIST_ROOMS")
 
     def handle_local_network_click(self):
@@ -793,6 +794,8 @@ class BlackjackClient:
             # Verificar clique no botão Iniciar Jogo (apenas se for host)
             # Adicionando prints detalhados aqui
             is_on_start_button = start_button_rect.collidepoint(mouse_pos)
+            # MOSTRAR RESULTADO DO COLLIDEPOINT EXPLICITAMENTE
+            print(f"[DEBUG] start_button_rect.collidepoint(mouse_pos): {is_on_start_button}") # DEBUG 
             print(f"[DEBUG] Clique no botão iniciar? {is_on_start_button}") # DEBUG
             if self.host_mode and is_on_start_button:
                 print("[DEBUG] Clique detectado no botão Iniciar Jogo (Host Mode TRUE).") # DEBUG
@@ -1850,7 +1853,7 @@ class BlackjackClient:
              # Tenta criar o player novamente se não existir por algum motivo
              if self.player_id and self.player_name:
                  self.player = Player(self.player_name, self.player_balance, self.player_id)
-             else:
+        else:
                  self.current_view = "menu" # Volta pro menu se não tem dados do host
                  return
         
@@ -2340,7 +2343,7 @@ class BlackjackClient:
         button_width = 200
         button_height = 50
         button_y = 500 # Posição original
-
+        
         # Botão Buscar Salas (Restaurado)
         mouse_pos = pygame.mouse.get_pos()
         browse_button = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
@@ -2368,7 +2371,7 @@ class BlackjackClient:
         cancel_text = self.medium_font.render("Cancelar", True, WHITE)
         cancel_text_rect = cancel_text.get_rect(center=cancel_button.center)
         self.screen.blit(cancel_text, cancel_text_rect)
-
+    
         # Exibir mensagens de erro/sucesso
         self.display_messages()
 
@@ -2507,6 +2510,7 @@ class BlackjackClient:
             else:
                 self.error_message = "Não conectado para listar salas."
                 self.message_timer = pygame.time.get_ticks()
+                # CORRIGIR INDENTAÇÃO: Deve estar dentro do else
                 self.connect_websocket() # Tenta conectar
         else:
             self.error_message = "Busca local não implementada."
@@ -2516,7 +2520,7 @@ class BlackjackClient:
         """Tenta entrar na sala selecionada na lista."""
         if index < 0 or index >= len(self.room_list):
             return
-
+        
         room = self.room_list[index]
         print(f"Tentando entrar na sala selecionada: {room['name']} (ID: {room['id']})")
         
@@ -2532,6 +2536,7 @@ class BlackjackClient:
         # Se não tem senha, entrar diretamente
         # Criar o jogador (se necessário)
         if not self.player:
+            # CORRIGIR INDENTAÇÃO: Adicionar indentação
             self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
         
         # Conectar à sala (chama connect_to_online_room ou connect_to_local_room)
@@ -2554,6 +2559,7 @@ class BlackjackClient:
         if not self.websocket_client or not self.websocket_client.is_connected():
             self.error_message = "Não conectado ao servidor WebSocket."
             self.message_timer = pygame.time.get_ticks()
+            # CORRIGIR INDENTAÇÃO: Alinhar com as linhas acima
             self.connect_websocket() # Tentar reconectar
             return False
 
@@ -2599,11 +2605,11 @@ class BlackjackClient:
         # Configurar conexão P2P como cliente (se não existir)
         if not self.p2p_manager:
             self.p2p_manager = P2PManager(host=False, local_network=True)
-            self.p2p_manager.register_message_callback(self.on_message_received)
-            self.p2p_manager.register_connection_callback(self.on_player_connected)
-            self.p2p_manager.register_disconnection_callback(self.on_player_disconnected)
-            self.p2p_manager.start()
-        
+        self.p2p_manager.register_message_callback(self.on_message_received)
+        self.p2p_manager.register_connection_callback(self.on_player_connected)
+        self.p2p_manager.register_disconnection_callback(self.on_player_disconnected)
+        self.p2p_manager.start()
+    
         # Conectar ao host
         connect_success, connection_message = self.p2p_manager.connect_to_host(host_address)
         if not connect_success:
@@ -2635,10 +2641,11 @@ class BlackjackClient:
     def handle_join_room_event(self, event):
         """Manipular eventos na tela de juntar-se a uma sala"""
         if event.type == pygame.MOUSEBUTTONDOWN:
+            # CORRIGIR INDENTAÇÃO: Todo este bloco precisa ser indentado
             mouse_pos = pygame.mouse.get_pos()
             form_x = SCREEN_WIDTH // 2 - 250
             form_y = 150
-            
+        
             # Ativar/desativar campos de entrada
             # Campo ID da Sala
             id_box = pygame.Rect(form_x + 30, form_y + 70, 440, 40)
@@ -2653,13 +2660,7 @@ class BlackjackClient:
                 self.room_id_input_active = False
             
             # Botões de modo de conexão (Restaurar se a lógica for usada)
-            # y_offset = form_y + 250
-            # online_rect = pygame.Rect(form_x + 30, y_offset + 40, 200, 40)
-            # local_rect = pygame.Rect(form_x + 270, y_offset + 40, 200, 40)
-            # if online_rect.collidepoint(mouse_pos):
-            #     self.connection_mode_selection = "online"
-            # elif local_rect.collidepoint(mouse_pos):
-            #     self.connection_mode_selection = "local"
+            # ... (código comentado) ...
             
             # Botão Buscar Salas
             button_width = 200
@@ -2684,8 +2685,9 @@ class BlackjackClient:
                 self.current_view = "menu"
                 return
                 
-        # Entrada de teclado para os campos ativos
+        # CORRIGIR INDENTAÇÃO: Alinhar com o if event.type == MOUSEBUTTONDOWN
         elif event.type == pygame.KEYDOWN:
+            # CORRIGIR INDENTAÇÃO: Indentar sob o elif
             if self.room_id_input_active:
                 if event.key == pygame.K_BACKSPACE:
                     self.room_id_input = self.room_id_input[:-1]
@@ -2791,7 +2793,7 @@ class BlackjackClient:
             # Tentar reconectar?
             # self.connect_websocket()
             return False
-
+    
     def render_room_browser(self):
         """Renderizar a tela de navegação de salas disponíveis"""
         # Background com gradiente
@@ -2963,7 +2965,7 @@ class BlackjackClient:
         back_text = self.medium_font.render("Voltar", True, WHITE)
         back_text_rect = back_text.get_rect(center=back_button.center)
         self.screen.blit(back_text, back_text_rect)
-
+    
     # <<<< INÍCIO CÓDIGO RESTAURADO display_messages >>>>
     def display_messages(self):
         """Exibe mensagens temporárias de erro ou sucesso na tela."""
@@ -2978,6 +2980,7 @@ class BlackjackClient:
             self.render_message(self.success_message, (0, 200, 0)) # Verde para sucesso
             # Limpar a mensagem de erro
             self.error_message = ""
+        # CORRIGIR INDENTAÇÃO: Alinhar com if/elif
         else:
             # Limpar ambas as mensagens se o tempo expirou
             self.error_message = ""
