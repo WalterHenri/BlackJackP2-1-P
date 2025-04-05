@@ -355,8 +355,9 @@ class BlackjackClient:
                     self.running = False
                 self.handle_event(event)
 
+            # Lógica principal de desenho baseada na view
             self.update()
-            print(f"[DEBUG] Antes de render. View: {self.current_view}") # DEBUG
+            #print(f"[DEBUG] Antes de render. View: {self.current_view}") # DEBUG # Linha a ser removida
             self.render()
             self.clock.tick(60)
 
@@ -410,6 +411,8 @@ class BlackjackClient:
             elif msg_type == "ERROR":
                  self.handle_server_error(payload)
             # Adicionar outros tipos (GAME_STATE, CHAT, etc.)
+            elif msg_type == "GAME_STATE": # Adicionado handler para estado do jogo
+                self.handle_game_state(payload)
             elif msg_type == "DISCONNECTED": # Mensagem interna do client
                 self.handle_server_disconnect()
             else:
@@ -526,6 +529,26 @@ class BlackjackClient:
         self.message_timer = pygame.time.get_ticks()
 
     # handle_game_start_info não é mais necessário da mesma forma
+
+    def handle_game_state(self, payload):
+        """Lida com a atualização do estado do jogo recebida do servidor."""
+        print(f"Recebido GAME_STATE: {payload}")
+        if payload: # Verifica se o payload não é nulo
+            self.game_state = payload # Armazena todo o estado recebido
+            # Mudar a view para o jogo somente se não estiver já no jogo
+            # Isso evita transições desnecessárias se já estamos na tela correta
+            if self.current_view != "game":
+                print("Mudando a view para 'game'...")
+                self.current_view = "game"
+                self.success_message = "Jogo iniciado!"
+                self.message_timer = pygame.time.get_ticks()
+            else:
+                 # Se já estamos no jogo, apenas atualiza o estado (útil para turnos)
+                 print("Estado do jogo atualizado.")
+        else:
+            print("Erro: Payload de GAME_STATE está vazio ou inválido.")
+            self.error_message = "Erro ao receber estado do jogo."
+            self.message_timer = pygame.time.get_ticks()
 
     def handle_server_disconnect(self):
         print("Desconectado do servidor WebSocket.")
@@ -762,7 +785,7 @@ class BlackjackClient:
         """Lidar com eventos na tela de lobby"""
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = event.pos
-            print(f"[DEBUG] Clique no lobby em: {mouse_pos}") # DEBUG
+            # print(f"[DEBUG] Clique no lobby em: {mouse_pos}") # DEBUG
             button_width = 200
             button_height = 50
             button_y = SCREEN_HEIGHT - 80
@@ -770,13 +793,13 @@ class BlackjackClient:
             # Coordenadas dos botões (devem ser iguais às de render_lobby)
             start_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - button_width // 2, button_y, button_width, button_height)
             leave_button_rect = pygame.Rect(30, button_y, 150, button_height)
-            print(f"[DEBUG] Botão Sair Rect: {leave_button_rect}") # DEBUG
-            print(f"[DEBUG] Botão Iniciar Rect: {start_button_rect}") # DEBUG
-            print(f"[DEBUG] self.host_mode: {self.host_mode}") # DEBUG
+            # print(f"[DEBUG] Botão Sair Rect: {leave_button_rect}") # DEBUG
+            # print(f"[DEBUG] Botão Iniciar Rect: {start_button_rect}") # DEBUG
+            # print(f"[DEBUG] self.host_mode: {self.host_mode}") # DEBUG
 
             # Verificar clique no botão Sair
             if leave_button_rect.collidepoint(mouse_pos):
-                print("[DEBUG] Clique detectado no botão Sair.") # DEBUG
+                # print("[DEBUG] Clique detectado no botão Sair.") # DEBUG
                 if self.websocket_client and self.websocket_client.is_connected():
                     self.send_websocket_message("LEAVE_ROOM", {"roomId": self.room_id})
                 
@@ -795,16 +818,16 @@ class BlackjackClient:
             # Adicionando prints detalhados aqui
             is_on_start_button = start_button_rect.collidepoint(mouse_pos)
             # MOSTRAR RESULTADO DO COLLIDEPOINT EXPLICITAMENTE
-            print(f"[DEBUG] start_button_rect.collidepoint(mouse_pos): {is_on_start_button}") # DEBUG 
-            print(f"[DEBUG] Clique no botão iniciar? {is_on_start_button}") # DEBUG
+            # print(f"[DEBUG] start_button_rect.collidepoint(mouse_pos): {is_on_start_button}") # DEBUG 
+            # print(f"[DEBUG] Clique no botão iniciar? {is_on_start_button}") # DEBUG
             if self.host_mode and is_on_start_button:
-                print("[DEBUG] Clique detectado no botão Iniciar Jogo (Host Mode TRUE).") # DEBUG
+                # print("[DEBUG] Clique detectado no botão Iniciar Jogo (Host Mode TRUE).") # DEBUG
                 if self.websocket_client and self.websocket_client.is_connected():
                     # Verificar se há jogadores suficientes (ex: pelo menos 1?)
-                    print(f"[DEBUG] Verificando contagem de jogadores: {len(self.lobby_players)}") # DEBUG
+                    # print(f"[DEBUG] Verificando contagem de jogadores: {len(self.lobby_players)}") # DEBUG
                     if len(self.lobby_players) >= 1: # Mudar para 2 se quiser mínimo de 2 players
-                         print(f"[DEBUG] Enviando START_GAME para sala {self.room_id}") # DEBUG
-                         if self.send_websocket_message("START_GAME", {"roomId": self.room_id}):
+                         # print(f"[DEBUG] Enviando START_GAME para sala {self.room_id}") # DEBUG
+                         if self.send_websocket_message("START_GAME", {"roomId": self.room_id}): # Revertido para maiúsculas
                               self.success_message = "Iniciando o jogo..."
                               self.message_timer = pygame.time.get_ticks()
                               # A mudança para a view 'game' deve ocorrer ao receber GAME_STARTED do servidor
@@ -812,18 +835,20 @@ class BlackjackClient:
                               self.error_message = "Falha ao enviar comando para iniciar jogo."
                               self.message_timer = pygame.time.get_ticks()
                     else:
-                        print("[DEBUG] Não há jogadores suficientes.") # DEBUG
+                        # print("[DEBUG] Não há jogadores suficientes.") # DEBUG
                         self.error_message = "Precisa de mais jogadores para iniciar."
                         self.message_timer = pygame.time.get_ticks()
                 else:
-                    print("[DEBUG] Não conectado ao websocket para iniciar.") # DEBUG
+                    # print("[DEBUG] Não conectado ao websocket para iniciar.") # DEBUG
                     self.error_message = "Não conectado para iniciar o jogo."
                     self.message_timer = pygame.time.get_ticks()
                 return
             elif not self.host_mode and is_on_start_button:
-                 print("[DEBUG] Clique no botão Iniciar, mas não é Host.") # DEBUG
+                 # print("[DEBUG] Clique no botão Iniciar, mas não é Host.") # DEBUG
+                 pass # Não faz nada se não for host
             elif self.host_mode and not is_on_start_button:
-                 print("[DEBUG] Host clicou, mas fora do botão Iniciar.") # DEBUG
+                 # print("[DEBUG] Host clicou, mas fora do botão Iniciar.") # DEBUG
+                 pass # Não faz nada se clicar fora do botão
 
         # TODO: Adicionar lógica para eventos de teclado, se necessário
         # pass # Remover pass original
@@ -1175,11 +1200,11 @@ class BlackjackClient:
 
     def render_lobby(self):
         """Renderizar a tela de lobby da sala"""
-        print("[DEBUG] Entrando em render_lobby") # DEBUG
+        # print("[DEBUG] Entrando em render_lobby") # DEBUG
         self.screen.fill((0, 50, 0)) # Fundo verde escuro
 
         # Título (Nome da Sala ou ID)
-        print(f"[DEBUG] room_id: {self.room_id}") # DEBUG
+        # print(f"[DEBUG] room_id: {self.room_id}") # DEBUG
         room_name_text = f"Sala: {self.room_id if self.room_id else '???'}" # Evitar erro se room_id for None/vazio
         title = self.large_font.render(room_name_text, True, WHITE)
         title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 50))
@@ -1191,7 +1216,7 @@ class BlackjackClient:
         code_label_rect = code_label_surface.get_rect(center=(SCREEN_WIDTH // 2, 100))
         self.screen.blit(code_label_surface, code_label_rect)
 
-        print(f"[DEBUG] renderizando código: {self.room_id}") # DEBUG
+        # print(f"[DEBUG] renderizando código: {self.room_id}") # DEBUG
         code_text_val = self.room_id if self.room_id else "N/A"
         code_text = self.large_font.render(code_text_val, True, (255, 220, 0)) # Amarelo destacado
         code_text_rect = code_text.get_rect(center=(SCREEN_WIDTH // 2, 140))
@@ -1206,14 +1231,14 @@ class BlackjackClient:
         player_label = self.medium_font.render("Jogadores:", True, WHITE)
         self.screen.blit(player_label, (50, player_list_y))
         
-        print(f"[DEBUG] lobby_players: {self.lobby_players}") # DEBUG
-        print(f"[DEBUG] self.player_id: {self.player_id}") # DEBUG
+        # print(f"[DEBUG] lobby_players: {self.lobby_players}") # DEBUG
+        # print(f"[DEBUG] self.player_id: {self.player_id}") # DEBUG
         if not isinstance(self.lobby_players, list):
-             print("[DEBUG] ERRO: self.lobby_players não é uma lista!") # DEBUG
+             # print("[DEBUG] ERRO: self.lobby_players não é uma lista!") # DEBUG
              self.lobby_players = [] # Tenta corrigir
 
         for i, player_info in enumerate(self.lobby_players):
-            print(f"[DEBUG] Renderizando jogador {i}: {player_info}") # DEBUG
+            # print(f"[DEBUG] Renderizando jogador {i}: {player_info}") # DEBUG
             player_name = player_info.get('name', 'Desconhecido')
             player_id_in_list = player_info.get('id') # DEBUG
             # Verifica se é o host comparando com self.player_id
@@ -1803,29 +1828,30 @@ class BlackjackClient:
             self.broadcast_game_state()
 
     def place_bet(self):
-        """Colocar uma aposta"""
-        # Verificar se o jogador tem saldo suficiente
-        if self.player.balance < self.bet_amount:
-            self.game.messages.append(f"Saldo insuficiente! Você tem apenas {self.player.balance} moedas.")
-            # Ajustar a aposta para o valor máximo disponível
-            self.bet_amount = self.player.balance
-            self.broadcast_game_state()
-            return
-            
-        if not self.host_mode:
-            # Cliente envia solicitação para o host
-            bet_message = Message.create_action_message(
-                self.player.player_id,
-                ActionType.PLACE_BET,
-                {"amount": self.bet_amount}
-            )
-            self.p2p_manager.send_message(bet_message)
+        """Envia a aposta do jogador para o servidor."""
+        if self.current_view == "game" and self.game_state and self.game_state.get("state") == "BETTING":
+            # Verificar se é a vez do jogador (ou se apostas são simultâneas)
+            # Aqui, assumimos que o jogador pode apostar se o estado for BETTING
+            if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
+                print(f"Enviando aposta: {self.bet_amount} para sala {self.room_id}")
+                payload = {
+                    "roomId": self.room_id,
+                    "amount": self.bet_amount
+                    # O servidor identificará o jogador pelo ID da conexão/jogador
+                }
+                if self.send_websocket_message("PLACE_BET", payload):
+                    self.success_message = f"Aposta de {self.bet_amount} enviada."
+                    self.message_timer = pygame.time.get_ticks()
+                    # Opcional: Atualizar status local do jogador para 'Apostou' ou aguardar confirmação
+                    # Ex: self.game_state['players'][my_index]['status'] = 'Bet Placed'
+                else:
+                    self.error_message = "Falha ao enviar aposta."
+                    self.message_timer = pygame.time.get_ticks()
+            else:
+                self.error_message = "Não conectado ou fora de uma sala para apostar."
+                self.message_timer = pygame.time.get_ticks()
         else:
-            # Host processa diretamente
-            success, message = self.game.place_bet(self.player.player_id, self.bet_amount)
-            if success:
-                self.game.messages.append(f"{self.player.name} apostou {self.bet_amount}")
-            self.broadcast_game_state()
+            print("Não é possível apostar agora (view ou estado incorreto).")
 
     def start_game(self):
         """Inicia o jogo (se for o host) e notifica o servidor."""
@@ -1904,43 +1930,26 @@ class BlackjackClient:
         self.message_timer = pygame.time.get_ticks()
 
     def new_round(self):
-        """Iniciar uma nova rodada"""
-        if not self.game:
-            return
-            
-        # Verificar se o jogador foi eliminado (saldo <= 0)
-        human_player = next((p for p in self.game.state_manager.players if p.player_id == self.player.player_id), None)
-        if human_player:
-            eliminated, new_balance = check_player_eliminated(human_player.name, human_player.balance)
-            if eliminated:
-                self.game.messages.append(f"{human_player.name} foi eliminado! Saldo resetado para 100.")
-                human_player.balance = new_balance
-                self.player_balance = new_balance
-                update_player_balance(human_player.name, new_balance)
-
-        # Resetar o jogo para uma nova rodada
-        success, message = self.game.start_new_round()
-        if success:
-            self.game.messages.append("Nova rodada iniciada!")
-            
-            # Fazer apostas iniciais automaticamente
-            for player in self.game.state_manager.players:
-                # Verificar se o jogador tem saldo suficiente
-                if player.balance >= 100:
-                    self.game.place_bet(player.player_id, 100)
+        """Envia comando NEW_ROUND para o servidor (se for o host).""" # Descrição atualizada
+        # No modo online, apenas o host (ou o servidor automaticamente) inicia nova rodada.
+        # O cliente apenas renderiza o estado recebido. No máximo, o host envia um comando.
+        if self.current_view == "game" and self.game_state and self.game_state.get("state") == "GAME_OVER":
+            # Simplificação: Qualquer jogador pode tentar iniciar (servidor valida se é host)
+            if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
+                print(f"Solicitando NOVA RODADA para sala {self.room_id}")
+                payload = {"roomId": self.room_id}
+                if self.send_websocket_message("NEW_ROUND", payload):
+                    self.success_message = "Solicitação de nova rodada enviada."
+                    self.message_timer = pygame.time.get_ticks()
+                    # O cliente deve aguardar o novo GAME_STATE do servidor
                 else:
-                    # Se for o jogador humano com saldo insuficiente
-                    if player.player_id == self.player.player_id:
-                        # Voltar para o menu
-                        self.game.messages.append(f"{player.name} não tem saldo suficiente para apostar!")
-                        self.current_view = "menu"
-                        return
-            
-            # Distribuir cartas iniciais
-            self.game._deal_initial_cards()
-            self.broadcast_game_state()
+                    self.error_message = "Falha ao solicitar nova rodada."
+                    self.message_timer = pygame.time.get_ticks()
+            else:
+                self.error_message = "Não conectado ou fora de uma sala."
+                self.message_timer = pygame.time.get_ticks()
         else:
-            print(f"Erro ao iniciar nova rodada: {message}")
+            print("Não é possível iniciar nova rodada agora (jogo não acabou?).")
 
     def leave_lobby(self):
         """Sair do lobby e voltar ao menu (envia comando LEAVE_ROOM)"""
