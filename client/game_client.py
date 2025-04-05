@@ -29,8 +29,10 @@ WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
 GREEN = (0, 128, 0)
 RED = (255, 0, 0)
-BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
 GRAY = (200, 200, 200)
+BUTTON_COLOR = (50, 120, 200)  # Azul médio para botões
+BUTTON_HOVER_COLOR = (70, 150, 240)  # Azul mais claro para hover
 
 # Configurações da tela
 SCREEN_WIDTH = 1024
@@ -243,6 +245,9 @@ class BlackjackClient:
         self.player = None # Será criado ao definir nome ou conectar
         self.player_id = None # ID atribuído pelo servidor
         self.dealer = None
+        # Definir dimensões das cartas para uso no render_game
+        self.card_width = CARD_WIDTH
+        self.card_height = CARD_HEIGHT
         self.my_server = None
         self.client_socket = None
         self.server_address = "itetech-001-site1.qtempurl.com" # Endereço base do servidor
@@ -252,6 +257,8 @@ class BlackjackClient:
         self.server_status = "Disconnected"
         self.current_bet = 0
         self.bet_amount = 100  # Valor inicial da aposta
+        self.bet_amount_str = "100"  # String para entrada de texto da aposta
+        self.bet_input_active = False  # Controla se o campo de aposta está ativo
         self.selected_bot_count = 1
         self.selected_bot_strategy = "random"
         self.cursor_visible = True
@@ -287,6 +294,10 @@ class BlackjackClient:
 
         # Carregar sprites das cartas
         self.card_sprites = CardSprites()
+        # Dicionário para armazenar imagens de cartas por display_name
+        self.card_images = {}
+        # Inicializar com uma carta de verso (para cartas ocultas)
+        self.card_images["card_back"] = self.card_sprites.get_card_back()
 
         # Adicionar variável para controlar a exibição do pop-up de tutorial
         self.show_tutorial = False
@@ -1358,7 +1369,8 @@ class BlackjackClient:
         """Renderizar a tela do jogo"""
         if not self.game_state:
             self.screen.fill(GREEN)  # Fundo verde
-            self.medium_font.render_to(self.screen, (self.width // 2 - 150, self.height // 2 - 20), "Aguardando estado do jogo...", WHITE)
+            waiting_text = self.medium_font.render("Aguardando estado do jogo...", True, WHITE)
+            self.screen.blit(waiting_text, (SCREEN_WIDTH // 2 - 150, SCREEN_HEIGHT // 2 - 20))
             return
 
         # Acesso seguro aos dados do game_state
@@ -1376,9 +1388,16 @@ class BlackjackClient:
 
         # Background com gradiente (ou simples)
         self.screen.fill((0, 50, 0))  # Verde base escuro
+        
+        # Botão para sair do jogo
+        back_button = pygame.Rect(10, 10, 120, 40)
+        pygame.draw.rect(self.screen, (150, 30, 30), back_button, border_radius=5)
+        back_text = self.small_font.render("Sair", True, WHITE)
+        self.screen.blit(back_text, (back_button.centerx - 20, back_button.centery - 10))
 
         # --- Renderizar Mão do Dealer --- #
-        self.medium_font.render_to(self.screen, (50, 50), "Dealer:" + (f" ({game_data.get('dealerHandValue', '?')})" if game_phase != "BETTING" else ""), WHITE)
+        dealer_text = self.medium_font.render("Dealer:" + (f" ({game_data.get('dealerHandValue', '?')})" if game_phase != "BETTING" else ""), True, WHITE)
+        self.screen.blit(dealer_text, (50, 50))
         dealer_cards_x = 50
         # Esconder a primeira carta do dealer se for a vez do jogador
         hide_dealer_card = (game_phase == "PLAYER_TURN" and len(dealer_hand) > 0)
@@ -1391,8 +1410,8 @@ class BlackjackClient:
                     dealer_cards_x += self.card_width // 3  # Sobrepor cartas
 
         # --- Renderizar Mãos dos Jogadores --- #
-        player_start_y = self.height - 250
-        player_spacing = min(150, self.width // max(len(players), 1))
+        player_start_y = SCREEN_HEIGHT - 250
+        player_spacing = min(150, SCREEN_WIDTH // max(len(players), 1))
         
         for i, p_state in enumerate(players):
             if not isinstance(p_state, dict):
@@ -1414,7 +1433,7 @@ class BlackjackClient:
             
             # Ajustar para distribuir melhor (opcional)
             if len(players) <= 4:
-                player_x = 50 + (i * (self.width - 100) // max(len(players), 1))
+                player_x = 50 + (i * (SCREEN_WIDTH - 100) // max(len(players), 1))
             
             player_y = player_start_y
             
@@ -1426,8 +1445,10 @@ class BlackjackClient:
             if is_current_player:
                 player_label += " - Turno"
                 
-            self.medium_font.render_to(self.screen, (player_x, player_y), player_label, name_color)
-            self.small_font.render_to(self.screen, (player_x, player_y + 25), f"Saldo: {balance} | Aposta: {current_bet}", WHITE)
+            player_name_text = self.medium_font.render(player_label, True, name_color)
+            player_info_text = self.small_font.render(f"Saldo: {balance} | Aposta: {current_bet}", True, WHITE)
+            self.screen.blit(player_name_text, (player_x, player_y))
+            self.screen.blit(player_info_text, (player_x, player_y + 25))
             
             # Renderizar cartas
             cards_x = player_x
@@ -1451,27 +1472,45 @@ class BlackjackClient:
             elif player_status == "STAND":
                 hand_value_text += " (Parou)"
             
-            self.medium_font.render_to(self.screen, (player_x, cards_y + self.card_height + 10), hand_value_text, status_color)
+            hand_value_surface = self.medium_font.render(hand_value_text, True, status_color)
+            self.screen.blit(hand_value_surface, (player_x, cards_y + CARD_HEIGHT + 10))
         
         # --- Renderizar Botões de Ação (Apenas para nosso jogador) --- #
         if our_player_state:
             is_our_turn = (current_player_id == self.player_id)
-            button_y = self.height - 60
-            button_x_start = self.width - 450
+            button_y = SCREEN_HEIGHT - 60
+            button_x_start = SCREEN_WIDTH - 450
             button_spacing = 110
             
             # BETTING: Campo de aposta e botão de confirmar
             if game_phase == "BETTING" and our_player_state.get("status") == "BETTING":
                 bet_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
                 pygame.draw.rect(self.screen, BUTTON_COLOR if not self.bet_input_active else BUTTON_HOVER_COLOR, bet_button_rect, border_radius=5)
-                self.small_font.render_to(self.screen, (bet_button_rect.centerx - 35, bet_button_rect.centery - 10), "Apostar", BLACK)
+                bet_text_surface = self.small_font.render("Apostar", True, BLACK)
+                self.screen.blit(bet_text_surface, (bet_button_rect.centerx - 35, bet_button_rect.centery - 10))
                 
                 # Campo de Input de Aposta
                 input_rect = pygame.Rect(button_x_start + button_spacing, button_y, 150, 40)
                 pygame.draw.rect(self.screen, WHITE, input_rect, border_radius=5)
                 pygame.draw.rect(self.screen, BLACK, input_rect, 2, 5)  # Borda
                 bet_text = self.bet_amount_str if self.bet_input_active else str(our_player_state.get("currentBet", 0))
-                self.small_font.render_to(self.screen, (input_rect.x + 10, input_rect.centery - 10), bet_text, BLACK)
+                bet_amount_surface = self.small_font.render(bet_text, True, BLACK)
+                self.screen.blit(bet_amount_surface, (input_rect.x + 10, input_rect.centery - 10))
+                
+                # Botões de ajuste de aposta (+ e -)
+                btn_width, btn_height = 36, 36
+                
+                # Botão -
+                decrease_bet_button = pygame.Rect(input_rect.x - btn_width - 10, button_y + 2, btn_width, btn_height)
+                pygame.draw.rect(self.screen, BUTTON_COLOR, decrease_bet_button, border_radius=5)
+                minus_text = self.medium_font.render("-", True, BLACK)
+                self.screen.blit(minus_text, (decrease_bet_button.centerx - 5, decrease_bet_button.centery - 12))
+                
+                # Botão +
+                increase_bet_button = pygame.Rect(input_rect.right + 10, button_y + 2, btn_width, btn_height)
+                pygame.draw.rect(self.screen, BUTTON_COLOR, increase_bet_button, border_radius=5)
+                plus_text = self.medium_font.render("+", True, BLACK)
+                self.screen.blit(plus_text, (increase_bet_button.centerx - 7, increase_bet_button.centery - 12))
             
             # PLAYER_TURN: Botões Hit e Stand
             elif game_phase == "PLAYER_TURN" and is_our_turn and our_player_state.get("status") == "PLAYING":
@@ -1479,16 +1518,19 @@ class BlackjackClient:
                 stand_button_rect = pygame.Rect(button_x_start + button_spacing, button_y, 100, 40)
                 
                 pygame.draw.rect(self.screen, BUTTON_COLOR, hit_button_rect, border_radius=5)
-                self.small_font.render_to(self.screen, (hit_button_rect.centerx - 20, hit_button_rect.centery - 10), "Hit", BLACK)
+                hit_text = self.small_font.render("Hit", True, BLACK)
+                self.screen.blit(hit_text, (hit_button_rect.centerx - 20, hit_button_rect.centery - 10))
                 
                 pygame.draw.rect(self.screen, BUTTON_COLOR, stand_button_rect, border_radius=5)
-                self.small_font.render_to(self.screen, (stand_button_rect.centerx - 30, stand_button_rect.centery - 10), "Stand", BLACK)
+                stand_text = self.small_font.render("Stand", True, BLACK)
+                self.screen.blit(stand_text, (stand_button_rect.centerx - 30, stand_button_rect.centery - 10))
             
             # ROUND_OVER: Botão Nova Rodada
             elif game_phase == "ROUND_OVER" and self.host_mode:  # Nova rodada apenas para o host
                 new_round_button_rect = pygame.Rect(button_x_start, button_y, 180, 40)
                 pygame.draw.rect(self.screen, BUTTON_COLOR, new_round_button_rect, border_radius=5)
-                self.small_font.render_to(self.screen, (new_round_button_rect.centerx - 60, new_round_button_rect.centery - 10), "Nova Rodada", BLACK)
+                new_round_text = self.small_font.render("Nova Rodada", True, BLACK)
+                self.screen.blit(new_round_text, (new_round_button_rect.centerx - 60, new_round_button_rect.centery - 10))
         
         # Exibir mensagens e outras informações
         self.display_messages()
@@ -1502,19 +1544,46 @@ class BlackjackClient:
         current_player_id = self.game_state.get("currentPlayerId")
         is_our_turn = (current_player_id == self.player_id)
         
-        button_y = self.height - 60
-        button_x_start = self.width - 450
+        button_y = SCREEN_HEIGHT - 60
+        button_x_start = SCREEN_WIDTH - 450
         button_spacing = 110
         
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mouse_pos = event.pos
+            
+            # Verificar clique no botão de sair
+            back_button = pygame.Rect(10, 10, 120, 40)
+            if back_button.collidepoint(mouse_pos):
+                self.current_view = "confirm_leave_game"
+                return
             
             # Lógica de clique para APOSTA
             if game_phase == "BETTING" and self.our_player_state.get("status") == "BETTING":
                 bet_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
                 input_rect = pygame.Rect(button_x_start + button_spacing, button_y, 150, 40)
                 
-                if bet_button_rect.collidepoint(mouse_pos):
+                # Adicionar detecção de clique nos botões + e -
+                btn_width, btn_height = 36, 36
+                decrease_bet_button = pygame.Rect(input_rect.x - btn_width - 10, button_y + 2, btn_width, btn_height)
+                increase_bet_button = pygame.Rect(input_rect.right + 10, button_y + 2, btn_width, btn_height)
+                
+                if decrease_bet_button.collidepoint(mouse_pos):
+                    # Processar diminuição da aposta
+                    self.decrease_bet()
+                    # Atualizar o valor mostrado se o campo estiver ativo
+                    if self.bet_input_active:
+                        self.bet_amount_str = str(self.bet_amount)
+                    return
+                    
+                elif increase_bet_button.collidepoint(mouse_pos):
+                    # Processar aumento da aposta
+                    self.increase_bet()
+                    # Atualizar o valor mostrado se o campo estiver ativo
+                    if self.bet_input_active:
+                        self.bet_amount_str = str(self.bet_amount)
+                    return
+                
+                elif bet_button_rect.collidepoint(mouse_pos):
                     try:
                         bet_value = int(self.bet_amount_str) if self.bet_input_active else self.our_player_state.get("currentBet", 0)
                         if bet_value > 0:
@@ -1921,15 +1990,35 @@ class BlackjackClient:
 
     def increase_bet(self):
         """Aumentar o valor da aposta"""
+        # Verificar se estamos no modo online ou offline
+        is_online = self.websocket_client and self.websocket_client.is_connected()
+        
+        # Determinar o saldo atual com base no modo de jogo
+        if is_online and hasattr(self, 'our_player_state') and self.our_player_state:
+            current_balance = self.our_player_state.get("balance", 0)
+        else:
+            current_balance = getattr(self.player, "balance", 1000)
+        
+        # Aumentar a aposta em 10
         self.bet_amount += 10
-        if self.bet_amount > self.player.balance:
-            self.bet_amount = self.player.balance
+        
+        # Limitar ao saldo máximo disponível
+        if self.bet_amount > current_balance:
+            self.bet_amount = current_balance
+            
+        print(f"Aumentando aposta para {self.bet_amount}")
 
     def decrease_bet(self):
         """Diminuir o valor da aposta"""
+        # Diminuir a aposta em 10
         self.bet_amount -= 10
-        if self.bet_amount < 10:
-            self.bet_amount = 10
+        
+        # Definir o valor mínimo de aposta
+        min_bet = 10
+        if self.bet_amount < min_bet:
+            self.bet_amount = min_bet
+            
+        print(f"Diminuindo aposta para {self.bet_amount}")
 
     def create_bot(self, name, strategy="default"):
         """Criar um bot com a estratégia especificada
