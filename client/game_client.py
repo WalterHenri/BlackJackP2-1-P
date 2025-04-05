@@ -482,39 +482,70 @@ class BlackjackClient:
         self.message_timer = pygame.time.get_ticks()
 
     def handle_player_joined(self, payload):
-        """Chamado quando outro jogador entra na sala em que estamos."""
-        # A lógica existente parece ok, verifica roomId e adiciona à lista local
-        # print(f"[DEBUG] handle_player_joined payload: {payload}") # Debug
-        # print(f"[DEBUG] self.room_id: {self.room_id}") # Debug
-        # Verifica se o payload é um dicionário antes de acessar 'get'
-        if isinstance(payload, dict) and payload.get("roomId") == self.room_id and "player" in payload:
+        """Chamado quando outro jogador entra na sala."""
+        print(f"[DEBUG] handle_player_joined recebeu: {payload}")
+        # Verifica se estamos na sala correta e se temos dados válidos do jogador
+        if isinstance(payload, dict) and payload.get("roomId") == self.room_id and isinstance(payload.get("player"), dict):
              player_info = payload["player"]
-             player_id = player_info.get('playerId') # CORREÇÃO: Usar playerId
+             # O servidor pode enviar 'id' em vez de 'playerId', verificamos ambos
+             player_id = player_info.get('id') or player_info.get('playerId')
              player_name = player_info.get('name', 'Desconhecido')
-             print(f"Jogador {player_name} (ID: {player_id}) entrou na sala.")
-             # Adicionar à lista local se não estiver presente
-             if player_id and not any(p.get('playerId') == player_id for p in self.lobby_players):
-                 self.lobby_players.append({'playerId': player_id, 'name': player_name}) # CORREÇÃO: Usar playerId
-                 self.success_message = f"{player_name} entrou na sala."
-                 self.message_timer = pygame.time.get_ticks()
-                 # self.update_lobby_view() # Não precisa chamar, render_lobby usa a lista
+             
+             print(f"[DEBUG] Jogador {player_name} (ID: {player_id}) entrou na sala.")
+             
+             # Só prosseguir se tivermos um ID válido
+             if player_id:
+                 # Verificar se o jogador já está na lista (usando qualquer uma das chaves possíveis)
+                 already_in_list = any(p.get('playerId') == player_id or p.get('id') == player_id for p in self.lobby_players)
+                 
+                 if not already_in_list:
+                     # Adicionar à lista com o formato que a lista espera (usando 'playerId')
+                     new_player = {'playerId': player_id, 'name': player_name}
+                     self.lobby_players.append(new_player)
+                     print(f"[DEBUG] Adicionado à lista de lobby: {new_player}")
+                     print(f"[DEBUG] Lista atualizada: {self.lobby_players}")
+                     
+                     self.success_message = f"{player_name} entrou na sala."
+                     self.message_timer = pygame.time.get_ticks()
+                 else:
+                     print(f"[DEBUG] Jogador {player_name} já estava na lista do lobby.")
              else:
-                  print(f"[DEBUG] Jogador {player_name} já estava na lista ou ID inválido.")
+                 print(f"[DEBUG] ID de jogador inválido: {player_info}")
         else:
             print(f"PLAYER_JOINED ignorado (sala errada, não estamos em sala, ou payload inválido). Payload: {payload}")
 
     def handle_player_left(self, payload):
         """Chamado quando outro jogador sai da sala."""
+        print(f"[DEBUG] handle_player_left recebeu: {payload}")
         if isinstance(payload, dict) and payload.get("roomId") == self.room_id and "playerId" in payload:
              player_id_left = payload["playerId"]
              player_name = next((p.get('name', player_id_left) for p in self.lobby_players if p.get('playerId') == player_id_left), player_id_left)
              print(f"Jogador {player_name} (ID: {player_id_left}) saiu da sala.")
+             
              # Remover da lista local
              initial_count = len(self.lobby_players)
-             self.lobby_players = [p for p in self.lobby_players if p.get('playerId') != player_id_left] # CORREÇÃO: Usar get('playerId')
+             self.lobby_players = [p for p in self.lobby_players if p.get('playerId') != player_id_left]
+             
              if len(self.lobby_players) < initial_count:
-                 self.error_message = f"{player_name} saiu."
+                 self.info_message = f"{player_name} saiu da sala."
                  self.message_timer = pygame.time.get_ticks()
+                 
+                 # Verificar se ainda há outros jogadores na sala além de nós
+                 player_ids_remaining = [p.get('playerId') for p in self.lobby_players]
+                 print(f"[DEBUG] Jogadores restantes: {player_ids_remaining}. Nosso ID: {self.player_id}")
+                 
+                 # Se só sobrou nosso ID ou a lista está vazia, voltar ao navegador de salas
+                 if len(player_ids_remaining) <= 1 and self.player_id in player_ids_remaining or not player_ids_remaining:
+                     print(f"[DEBUG] Apenas você sobrou na sala. Retornando ao navegador...")
+                     self.room_id = None
+                     self.lobby_players = []
+                     self.game_state = None
+                     self.host_mode = False
+                     self.current_view = "room_browser"
+                     self.send_websocket_message("LIST_ROOMS")  # Atualiza a lista de salas
+                     self.info_message = "Você era o último na sala. Retornando..."
+                     self.message_timer = pygame.time.get_ticks()
+             
              # A lógica de novo host é tratada em handle_new_host
         else:
             print(f"PLAYER_LEFT ignorado (sala errada, não estamos em sala, ou payload inválido). Payload: {payload}")
@@ -893,6 +924,21 @@ class BlackjackClient:
 
     def handle_game_event(self, event):
         """Lidar com eventos durante o jogo"""
+        # Se estamos no modo online, usar a função de tratamento específica
+        is_online = self.websocket_client and self.websocket_client.is_connected()
+        if is_online:
+            # Tratar o botão de voltar (comum a ambos os modos)
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                menu_button = pygame.Rect(10, 10, 120, 40)
+                if menu_button.collidepoint(event.pos):
+                    self.current_view = "confirm_leave_game"
+                    return
+            
+            # Delegar os eventos de gameplay online para o handler específico
+            self.handle_game_events(event)
+            return
+
+        # Código original para o modo offline
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = event.pos
 
@@ -1311,338 +1357,221 @@ class BlackjackClient:
     def render_game(self):
         """Renderizar a tela do jogo"""
         if not self.game_state:
+            self.screen.fill(GREEN)  # Fundo verde
+            self.fonts["medium"].render_to(self.screen, (self.width // 2 - 150, self.height // 2 - 20), "Aguardando estado do jogo...", WHITE)
             return
 
-        # Background com gradiente
+        # Acesso seguro aos dados do game_state
+        game_data = self.game_state
+        dealer_hand = game_data.get("dealerHand", [])
+        players = game_data.get("players", [])  # Lista de estados dos jogadores
+        game_phase = game_data.get("state", "UNKNOWN")  # Ex: BETTING, PLAYER_TURN, DEALER_TURN, ROUND_OVER
+        current_player_id = game_data.get("currentPlayerId")
+
+        # Tentar encontrar o estado do nosso jogador
+        our_player_state = next((p for p in players if p.get("id") == self.player_id or p.get("playerId") == self.player_id), None)
+        
+        # Salvar em uma variável temporária para uso em handle_game_events
+        self.our_player_state = our_player_state
+
+        # Background com gradiente (ou simples)
         self.screen.fill((0, 50, 0))  # Verde base escuro
-        
-        # Área superior (título)
-        title_bg = pygame.Rect(0, 0, SCREEN_WIDTH, 60)
-        pygame.draw.rect(self.screen, (0, 80, 0), title_bg)
-        pygame.draw.rect(self.screen, (0, 100, 0), title_bg, 2)  # Borda
-        
-        # Título
-        title = self.title_font.render("Blackjack 21", True, WHITE)
-        self.screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 10))
 
-        # Botão de Voltar ao Menu (apenas no modo single player)
-        if len(self.game_state["players"]) <= 4:  # Single player mode
-            menu_button = pygame.Rect(10, 10, 120, 40)
-            # Efeito hover
-            mouse_pos = pygame.mouse.get_pos()
-            menu_color = (220, 0, 0) if menu_button.collidepoint(mouse_pos) else (180, 0, 0)
-            pygame.draw.rect(self.screen, menu_color, menu_button, border_radius=10)
-            pygame.draw.rect(self.screen, WHITE, menu_button, 2, border_radius=10)
-            back_text = self.medium_font.render("Menu", True, WHITE)
-            text_rect = back_text.get_rect(center=menu_button.center)
-            self.screen.blit(back_text, text_rect)
+        # --- Renderizar Mão do Dealer --- #
+        self.fonts["medium"].render_to(self.screen, (50, 50), "Dealer:" + (f" ({game_data.get('dealerHandValue', '?')})" if game_phase != "BETTING" else ""), WHITE)
+        dealer_cards_x = 50
+        # Esconder a primeira carta do dealer se for a vez do jogador
+        hide_dealer_card = (game_phase == "PLAYER_TURN" and len(dealer_hand) > 0)
+        for i, card_info in enumerate(dealer_hand):
+            if isinstance(card_info, dict):
+                card_img_key = card_info.get("display") if not (hide_dealer_card and i == 0) else "card_back"
+                card_img = self.card_images.get(card_img_key)
+                if card_img:
+                    self.screen.blit(card_img, (dealer_cards_x, 80))
+                    dealer_cards_x += self.card_width // 3  # Sobrepor cartas
 
-        # Informações do jogador atual
-        # CORREÇÃO: Acessar com a chave camelCase recebida do servidor
-        current_player_data = self.game_state["players"][self.game_state["currentPlayerIndex"]]
-        current_player_text = self.medium_font.render(f"Vez de: {current_player_data['name']}", True, WHITE)
-        self.screen.blit(current_player_text, (20, 70))
-
-        # Estado atual do jogo
-        state_text = {
-            "BETTING": "Fase de Apostas",
-            "DEALING": "Distribuindo Cartas",
-            "PLAYER_TURN": "Turno dos Jogadores",
-            "GAME_OVER": "Fim da Rodada"
-        }.get(self.game_state["state"], self.game_state["state"])
+        # --- Renderizar Mãos dos Jogadores --- #
+        player_start_y = self.height - 250
+        player_spacing = min(150, self.width // max(len(players), 1))
         
-        state_colors = {
-            "BETTING": (0, 100, 200),
-            "DEALING": (0, 150, 150),
-            "PLAYER_TURN": (0, 150, 0),
-            "GAME_OVER": (150, 0, 0)
-        }
-        
-        state_color = state_colors.get(self.game_state["state"], WHITE)
-        state_display = self.medium_font.render(state_text, True, state_color)
-        state_rect = state_display.get_rect(topright=(SCREEN_WIDTH - 20, 70))
-        self.screen.blit(state_display, state_rect)
-
-        # Layout modificado - Divisão da tela em áreas
-        # Nova distribuição de espaço:
-        # - Área central mais ampla para as cartas
-        # - Chat e controles na parte inferior, mais compactos
-        # - Posicionamento melhor para evitar sobreposições
-        
-        # Altura reservada para controles/chat na parte inferior
-        FOOTER_HEIGHT = 150
-        
-        # Área central do jogo (maior, sem bordas invasivas)
-        game_area_height = SCREEN_HEIGHT - 100 - FOOTER_HEIGHT
-        game_area = pygame.Rect(10, 100, SCREEN_WIDTH - 20, game_area_height)
-        # Sem desenhar retângulo preenchido, apenas uma borda sutil
-        pygame.draw.rect(self.screen, (0, 100, 0), game_area, 2, border_radius=5)
-
-        # Renderizar cartas e informações de cada jogador
-        player_count = len(self.game_state["players"])
-        
-        # Identificar o jogador humano
-        human_player_index = next((i for i, p in enumerate(self.game_state["players"]) 
-                                 if not p["name"].startswith("Bot")), 0)
-        
-        # Definir posições dos jogadores - mais espaço para evitar sobreposições
-        # Jogador humano agora está mais acima para evitar sobreposição com os controles
-        if player_count == 2:
-            player_positions = [
-                (SCREEN_WIDTH // 2, SCREEN_HEIGHT - FOOTER_HEIGHT - 120),  # Jogador (mais alto)
-                (SCREEN_WIDTH // 2, 230)                                   # Bot (cima, mais baixo)
-            ]
-        elif player_count == 3:
-            player_positions = [
-                (SCREEN_WIDTH // 2, SCREEN_HEIGHT - FOOTER_HEIGHT - 120),  # Jogador (mais alto)
-                (SCREEN_WIDTH // 4, 230),                                  # Bot 1 (esquerda, mais baixo)
-                (3 * SCREEN_WIDTH // 4, 230)                               # Bot 2 (direita, mais baixo)
-            ]
-        elif player_count == 4:
-            player_positions = [
-                (SCREEN_WIDTH // 2, SCREEN_HEIGHT - FOOTER_HEIGHT - 120),  # Jogador (mais alto)
-                (SCREEN_WIDTH // 4, 230),                                  # Bot 1 (esquerda, mais baixo)
-                (SCREEN_WIDTH // 2, 180),                                  # Bot 2 (cima)
-                (3 * SCREEN_WIDTH // 4, 230)                               # Bot 3 (direita, mais baixo)
-            ]
-        else:
-            player_positions = [
-                (SCREEN_WIDTH // 2, SCREEN_HEIGHT - FOOTER_HEIGHT - 120),
-                (SCREEN_WIDTH // 2, 230)                                   # Bot mais baixo
-            ]
-        
-        # Tamanho das cartas (maior para o jogador humano)
-        HUMAN_CARD_WIDTH = 120
-        HUMAN_CARD_HEIGHT = 180
-        BOT_CARD_WIDTH = 90
-        BOT_CARD_HEIGHT = 135
-        
-        for i, player in enumerate(self.game_state["players"]):
-            x, y = player_positions[i]
-            is_human = not player["name"].startswith("Bot")
-            
-            # Evitar desenhar retângulos de fundo grandes - apenas um painel de informações compacto
-            info_height = 70
-            info_panel = pygame.Rect(x - 150, y - info_height - 20, 300, info_height)
-            
-            # Desenhar apenas um fundo sutil para as informações do jogador
-            bg_color = (0, 70, 0)  # Cor mais sutil para todos os jogadores
-            info_alpha = pygame.Surface((info_panel.width, info_panel.height), pygame.SRCALPHA)
-            info_alpha.fill((0, 70, 0, 180))  # Semi-transparente
-            self.screen.blit(info_alpha, info_panel)
-            
-            # Para o jogador atual, um destaque visual
-            # CORREÇÃO: Usar playerId
-            if player["playerId"] == current_player_data["playerId"]:
-                pygame.draw.rect(self.screen, (255, 215, 0), info_panel, 2, border_radius=5)  # Borda dourada
-            else:
-                pygame.draw.rect(self.screen, (0, 100, 0), info_panel, 1, border_radius=5)  # Borda sutil
-            
-            # Nome do jogador
-            name_font = self.large_font if is_human else self.medium_font
-            player_info = name_font.render(f"{player['name']}", True, WHITE)
-            self.screen.blit(player_info, (x - player_info.get_width() // 2, y - info_height - 10))
-            
-            # Informações do jogador - mais compactas
-            info_text = f"Saldo: {player['balance']} | Aposta: {player['currentBet']}" # CORREÇÃO: currentBet
-            if show_value := (is_human or self.game_state["state"] == "GAME_OVER"):
-                info_text += f" | Valor: {player['handValue']}" # CORREÇÃO: handValue
-                if player['isBusted']: # CORREÇÃO: isBusted
-                    info_text += " (Estouro!)"
-            
-            info_color = RED if player['isBusted'] else WHITE # CORREÇÃO: isBusted
-            player_info_text = self.small_font.render(info_text, True, info_color)
-            self.screen.blit(player_info_text, (x - player_info_text.get_width() // 2, y - info_height + 25))
-
-            # Renderizar cartas do jogador com melhor espaçamento
-            if 'hand' in player:
-                card_width = HUMAN_CARD_WIDTH if is_human else BOT_CARD_WIDTH
-                card_height = HUMAN_CARD_HEIGHT if is_human else BOT_CARD_HEIGHT
+        for i, p_state in enumerate(players):
+            if not isinstance(p_state, dict):
+                continue
                 
-                # Maior espaçamento para o jogador humano, cartas mais espalhadas
-                spacing = 40 if is_human else 30
+            player_id = p_state.get("id") or p_state.get("playerId")
+            player_name = p_state.get("name", f"Jogador {i+1}")
+            player_hand = p_state.get("hand", [])
+            hand_value = p_state.get("handValue", 0)
+            player_status = p_state.get("status", "PLAYING")  # Ex: PLAYING, BETTING, WAITING, BUSTED, BLACKJACK, STAND
+            balance = p_state.get("balance", "?")
+            current_bet = p_state.get("currentBet", 0)
+            
+            is_our_player = (player_id == self.player_id)
+            is_current_player = (player_id == current_player_id)
+            
+            # Calcular posição horizontal baseada no índice
+            player_x = 50 + (i * player_spacing)
+            
+            # Ajustar para distribuir melhor (opcional)
+            if len(players) <= 4:
+                player_x = 50 + (i * (self.width - 100) // max(len(players), 1))
+            
+            player_y = player_start_y
+            
+            # Nome e info do jogador
+            name_color = YELLOW if is_our_player else WHITE
+            player_label = f"{player_name}"
+            if is_our_player:
+                player_label += " (Você)"
+            if is_current_player:
+                player_label += " - Turno"
                 
-                # Calcular largura total e posição inicial para centralizar
-                total_width = (len(player['hand']) - 1) * spacing + card_width
-                start_x = x - total_width // 2
+            self.fonts["medium"].render_to(self.screen, (player_x, player_y), player_label, name_color)
+            self.fonts["small"].render_to(self.screen, (player_x, player_y + 25), f"Saldo: {balance} | Aposta: {current_bet}", WHITE)
+            
+            # Renderizar cartas
+            cards_x = player_x
+            cards_y = player_y + 50
+            for card_info in player_hand:
+                if isinstance(card_info, dict):
+                    card_img = self.card_images.get(card_info.get("display", "card_back"))
+                    if card_img:
+                        self.screen.blit(card_img, (cards_x, cards_y))
+                        cards_x += self.card_width // 3  # Sobrepor cartas
+            
+            # Valor da mão e status
+            hand_value_text = f"Valor: {hand_value}"
+            status_color = WHITE
+            if player_status == "BUSTED":
+                hand_value_text += " (Estourou!)"
+                status_color = RED
+            elif player_status == "BLACKJACK":
+                hand_value_text += " (Blackjack!)"
+                status_color = YELLOW
+            elif player_status == "STAND":
+                hand_value_text += " (Parou)"
+            
+            self.fonts["medium"].render_to(self.screen, (player_x, cards_y + self.card_height + 10), hand_value_text, status_color)
+        
+        # --- Renderizar Botões de Ação (Apenas para nosso jogador) --- #
+        if our_player_state:
+            is_our_turn = (current_player_id == self.player_id)
+            button_y = self.height - 60
+            button_x_start = self.width - 450
+            button_spacing = 110
+            
+            # BETTING: Campo de aposta e botão de confirmar
+            if game_phase == "BETTING" and our_player_state.get("status") == "BETTING":
+                bet_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
+                pygame.draw.rect(self.screen, BUTTON_COLOR if not self.bet_input_active else BUTTON_HOVER_COLOR, bet_button_rect, border_radius=5)
+                self.fonts["small"].render_to(self.screen, (bet_button_rect.centerx - 35, bet_button_rect.centery - 10), "Apostar", BLACK)
                 
-                for j, card in enumerate(player['hand']):
-                    card_x = start_x + j * spacing
-                    card_y = y
-                    
-                    # Desenhar fundo preto para a carta, exatamente do mesmo tamanho
-                    # Sem bordas extras, apenas um fundo do tamanho da carta
-                    self.render_card_back(card_x, card_y, scale=card_width/CARD_WIDTH)
-                    
-                    # Mostrar cartas viradas para baixo para bots durante o jogo
-                    if not is_human and self.game_state["state"] != "GAME_OVER":
-                        self.render_card_back(card_x, card_y, scale=card_width/CARD_WIDTH)
+                # Campo de Input de Aposta
+                input_rect = pygame.Rect(button_x_start + button_spacing, button_y, 150, 40)
+                pygame.draw.rect(self.screen, WHITE, input_rect, border_radius=5)
+                pygame.draw.rect(self.screen, BLACK, input_rect, 2, 5)  # Borda
+                bet_text = self.bet_amount_str if self.bet_input_active else str(our_player_state.get("currentBet", 0))
+                self.fonts["small"].render_to(self.screen, (input_rect.x + 10, input_rect.centery - 10), bet_text, BLACK)
+            
+            # PLAYER_TURN: Botões Hit e Stand
+            elif game_phase == "PLAYER_TURN" and is_our_turn and our_player_state.get("status") == "PLAYING":
+                hit_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
+                stand_button_rect = pygame.Rect(button_x_start + button_spacing, button_y, 100, 40)
+                
+                pygame.draw.rect(self.screen, BUTTON_COLOR, hit_button_rect, border_radius=5)
+                self.fonts["small"].render_to(self.screen, (hit_button_rect.centerx - 20, hit_button_rect.centery - 10), "Hit", BLACK)
+                
+                pygame.draw.rect(self.screen, BUTTON_COLOR, stand_button_rect, border_radius=5)
+                self.fonts["small"].render_to(self.screen, (stand_button_rect.centerx - 30, stand_button_rect.centery - 10), "Stand", BLACK)
+            
+            # ROUND_OVER: Botão Nova Rodada
+            elif game_phase == "ROUND_OVER" and self.host_mode:  # Nova rodada apenas para o host
+                new_round_button_rect = pygame.Rect(button_x_start, button_y, 180, 40)
+                pygame.draw.rect(self.screen, BUTTON_COLOR, new_round_button_rect, border_radius=5)
+                self.fonts["small"].render_to(self.screen, (new_round_button_rect.centerx - 60, new_round_button_rect.centery - 10), "Nova Rodada", BLACK)
+        
+        # Exibir mensagens e outras informações
+        self.display_messages()
+
+    def handle_game_events(self, event):
+        """Processar eventos na tela de jogo online"""
+        if not self.game_state or not hasattr(self, 'our_player_state') or not self.our_player_state:
+            return
+            
+        game_phase = self.game_state.get("state", "UNKNOWN")
+        current_player_id = self.game_state.get("currentPlayerId")
+        is_our_turn = (current_player_id == self.player_id)
+        
+        button_y = self.height - 60
+        button_x_start = self.width - 450
+        button_spacing = 110
+        
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mouse_pos = event.pos
+            
+            # Lógica de clique para APOSTA
+            if game_phase == "BETTING" and self.our_player_state.get("status") == "BETTING":
+                bet_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
+                input_rect = pygame.Rect(button_x_start + button_spacing, button_y, 150, 40)
+                
+                if bet_button_rect.collidepoint(mouse_pos):
+                    try:
+                        bet_value = int(self.bet_amount_str) if self.bet_input_active else self.our_player_state.get("currentBet", 0)
+                        if bet_value > 0:
+                            print(f"[DEBUG] Enviando PLACE_BET: {bet_value}")
+                            self.send_websocket_message("PLACE_BET", {"amount": bet_value})
+                            self.bet_input_active = False
+                        else:
+                            self.error_message = "Aposta deve ser maior que zero."
+                            self.message_timer = pygame.time.get_ticks()
+                    except ValueError:
+                        self.error_message = "Valor de aposta inválido."
+                        self.message_timer = pygame.time.get_ticks()
+                        
+                elif input_rect.collidepoint(mouse_pos):
+                    self.bet_input_active = True
+                    self.bet_amount_str = ""
+                else:
+                    self.bet_input_active = False
+            
+            # Lógica de clique para HIT e STAND
+            elif game_phase == "PLAYER_TURN" and is_our_turn and self.our_player_state.get("status") == "PLAYING":
+                hit_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
+                stand_button_rect = pygame.Rect(button_x_start + button_spacing, button_y, 100, 40)
+                
+                if hit_button_rect.collidepoint(mouse_pos):
+                    print("[DEBUG] Enviando HIT")
+                    self.send_websocket_message("HIT")
+                elif stand_button_rect.collidepoint(mouse_pos):
+                    print("[DEBUG] Enviando STAND")
+                    self.send_websocket_message("STAND")
+            
+            # Lógica de clique para NOVA RODADA
+            elif game_phase == "ROUND_OVER" and self.host_mode:
+                new_round_button_rect = pygame.Rect(button_x_start, button_y, 180, 40)
+                if new_round_button_rect.collidepoint(mouse_pos):
+                    print("[DEBUG] Enviando NEW_ROUND")
+                    self.send_websocket_message("NEW_ROUND")
+        
+        # Lógica de input de teclado para APOSTA
+        elif event.type == pygame.KEYDOWN and self.bet_input_active:
+            if event.key == pygame.K_RETURN:
+                try:
+                    bet_value = int(self.bet_amount_str)
+                    if bet_value > 0:
+                        print(f"[DEBUG] Enviando PLACE_BET: {bet_value}")
+                        self.send_websocket_message("PLACE_BET", {"amount": bet_value})
+                        self.bet_input_active = False
                     else:
-                        self.render_card(card, card_x, card_y, scale=card_width/CARD_WIDTH)
-
-        # Footer redesenhado - mais elegante e compacto
-        footer_start_y = SCREEN_HEIGHT - FOOTER_HEIGHT
-        
-        # Fundo do footer com gradiente
-        footer_rect = pygame.Rect(0, footer_start_y, SCREEN_WIDTH, FOOTER_HEIGHT)
-        footer_gradient = pygame.Surface((SCREEN_WIDTH, FOOTER_HEIGHT))
-        for y in range(FOOTER_HEIGHT):
-            alpha = min(200, int(y * 1.5))
-            pygame.draw.line(footer_gradient, (0, 40, 0, alpha), (0, y), (SCREEN_WIDTH, y))
-        self.screen.blit(footer_gradient, footer_rect)
-        
-        # Linha divisória sutil
-        pygame.draw.line(self.screen, (0, 100, 0), (0, footer_start_y), (SCREEN_WIDTH, footer_start_y), 2)
-
-        # Área de mensagens redesenhada - mais à direita
-        messages_width = SCREEN_WIDTH // 2 - 40
-        messages_area = pygame.Rect(SCREEN_WIDTH // 2 + 20, footer_start_y + 10, messages_width, FOOTER_HEIGHT - 20)
-        
-        # Título da área de mensagens
-        msg_title = self.medium_font.render("Mensagens do Jogo", True, WHITE)
-        msg_title_rect = msg_title.get_rect(midtop=(messages_area.centerx, footer_start_y + 5))
-        self.screen.blit(msg_title, msg_title_rect)
-
-        # Fundo das mensagens semi-transparente
-        msg_bg = pygame.Surface((messages_area.width, messages_area.height), pygame.SRCALPHA)
-        msg_bg.fill((0, 0, 0, 80))  # Semi-transparente
-        self.screen.blit(msg_bg, messages_area)
-        pygame.draw.rect(self.screen, (0, 100, 0), messages_area, 1)  # Borda sutil
-
-        # Mensagens do jogo com melhor formatação
-        message_y = footer_start_y + 35
-        messages = self.game_state["messages"][-5:]  # Limitar a 5 mensagens
-        for msg in messages:
-            message_text = self.small_font.render(msg, True, WHITE)
-            # Limitar o comprimento da mensagem
-            if message_text.get_width() > messages_area.width - 20:
-                while message_text.get_width() > messages_area.width - 20:
-                    msg = msg[:-1]
-                    message_text = self.small_font.render(msg + "...", True, WHITE)
-            message_rect = message_text.get_rect(x=messages_area.x + 10, y=message_y)
-            self.screen.blit(message_text, message_rect)
-            message_y += 20  # Menor espaçamento entre mensagens
-
-        # Área de botões - completamente redesenhada
-        controls_x = 20
-        controls_width = SCREEN_WIDTH // 2 - 40
-        button_y = footer_start_y + 45  # Centralizado no footer
-        # CORREÇÃO: Usar playerId
-        is_our_turn = (current_player_data["playerId"] == self.player.player_id)
-
-        def draw_button(rect, color, hover_color, text, enabled=True):
-            """Desenha um botão elegante com efeitos de hover e sombra"""
-            mouse_pos = pygame.mouse.get_pos()
-            is_hover = rect.collidepoint(mouse_pos) and enabled
-            
-            alpha = 255 if enabled else 150
-            
-            # Sombra sutil
-            shadow_rect = rect.copy()
-            shadow_rect.y += 2
-            shadow = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-            shadow.fill((0, 0, 0, 100))
-            self.screen.blit(shadow, shadow_rect)
-            
-            # Botão com cor baseada no estado (hover/normal/desabilitado)
-            button_color = hover_color if is_hover else color
-            if not enabled:
-                # Dessaturar cores para botões desabilitados
-                r, g, b = button_color
-                avg = (r + g + b) // 3
-                button_color = (avg, avg, avg)
-            
-            pygame.draw.rect(self.screen, button_color, rect, border_radius=10)
-            
-            # Borda mais evidente para botões interativos
-            border_color = (255, 255, 255, 150) if is_hover else (255, 255, 255, 100)
-            border = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-            pygame.draw.rect(border, border_color, border.get_rect(), 2, border_radius=10)
-            self.screen.blit(border, rect)
-            
-            # Texto com sombra sutil para maior legibilidade
-            text_color = (255, 255, 255, alpha)
-            text_surface = self.medium_font.render(text, True, text_color)
-            text_rect = text_surface.get_rect(center=rect.center)
-            
-            # Sombra leve no texto
-            shadow_surf = self.medium_font.render(text, True, (0, 0, 0, 100))
-            shadow_rect = shadow_surf.get_rect(center=(text_rect.centerx + 1, text_rect.centery + 1))
-            self.screen.blit(shadow_surf, shadow_rect)
-            
-            # Texto principal
-            self.screen.blit(text_surface, text_rect)
-            
-            return is_hover
-
-        # Botões específicos baseados no estado do jogo
-        if self.game_state["state"] == "BETTING":
-            # Área de apostas redesenhada - mais bonita e clara
-            bet_panel = pygame.Rect(controls_x, footer_start_y + 10, controls_width, 30)
-            pygame.draw.rect(self.screen, (0, 60, 0), bet_panel, border_radius=5)
-            pygame.draw.rect(self.screen, (0, 100, 0), bet_panel, 1, border_radius=5)
-            
-            # Título da aposta
-            bet_title = self.medium_font.render("Sua Aposta:", True, WHITE)
-            self.screen.blit(bet_title, (controls_x + 10, footer_start_y + 14))
-            
-            # Valor da aposta em destaque
-            bet_amount_text = self.medium_font.render(f"{self.bet_amount}", True, WHITE)
-            bet_amount_x = controls_x + 120
-            self.screen.blit(bet_amount_text, (bet_amount_x, footer_start_y + 14))
-            
-            # Botões de ajuste de aposta mais visíveis
-            btn_width = 36
-            btn_height = 36
-            btn_y = footer_start_y + 12
-            
-            # Botão de diminuir aposta
-            decrease_bet_button = pygame.Rect(bet_amount_x + bet_amount_text.get_width() + 15, btn_y, btn_width, btn_height)
-            pygame.draw.rect(self.screen, (180, 0, 0), decrease_bet_button, border_radius=18)
-            pygame.draw.rect(self.screen, WHITE, decrease_bet_button, 2, border_radius=18)
-            
-            # Texto centralizado no botão
-            decrease_text = self.large_font.render("-", True, WHITE)
-            decrease_rect = decrease_text.get_rect(center=decrease_bet_button.center)
-            self.screen.blit(decrease_text, decrease_rect)
-            
-            # Botão de aumentar aposta
-            increase_bet_button = pygame.Rect(decrease_bet_button.right + 10, btn_y, btn_width, btn_height)
-            pygame.draw.rect(self.screen, (0, 180, 0), increase_bet_button, border_radius=18)
-            pygame.draw.rect(self.screen, WHITE, increase_bet_button, 2, border_radius=18)
-            
-            # Texto centralizado no botão
-            increase_text = self.large_font.render("+", True, WHITE)
-            increase_rect = increase_text.get_rect(center=increase_bet_button.center)
-            self.screen.blit(increase_text, increase_rect)
-
-            # Botão principal de aposta
-            bet_button = pygame.Rect(controls_x, button_y, controls_width, 50)
-            draw_button(bet_button, (0, 100, 180), (0, 140, 220), "Confirmar Aposta")
-
-        elif self.game_state["state"] == "PLAYER_TURN":
-            # Botões de ação durante o turno
-            button_width = (controls_width - 10) // 2
-            
-            # Botão de Hit
-            hit_button = pygame.Rect(controls_x, button_y, button_width, 50)
-            draw_button(hit_button, (0, 100, 180), (0, 140, 220), "Pedir Carta", is_our_turn)
-
-            # Botão de Stand
-            stand_button = pygame.Rect(controls_x + button_width + 10, button_y, button_width, 50)
-            draw_button(stand_button, (180, 0, 0), (220, 0, 0), "Parar", is_our_turn)
-            
-            # Se não for a vez do jogador, mostrar de quem é a vez
-            if not is_our_turn:
-                waiting_text = f"Aguardando {current_player_data['name']}..."
-                waiting_surface = self.medium_font.render(waiting_text, True, WHITE)
-                waiting_rect = waiting_surface.get_rect(midtop=(controls_x + controls_width // 2, button_y - 40))
-                self.screen.blit(waiting_surface, waiting_rect)
-
-        elif self.game_state["state"] == "GAME_OVER":
-            # Botão de Nova Rodada
-            new_round_button = pygame.Rect(controls_x, button_y, controls_width, 50)
-            draw_button(new_round_button, (0, 150, 0), (0, 180, 0), "Nova Rodada")
+                        self.error_message = "Aposta deve ser maior que zero."
+                        self.message_timer = pygame.time.get_ticks()
+                except ValueError:
+                    self.error_message = "Valor de aposta inválido."
+                    self.message_timer = pygame.time.get_ticks()
+            elif event.key == pygame.K_BACKSPACE:
+                self.bet_amount_str = self.bet_amount_str[:-1]
+            elif event.unicode.isdigit():
+                self.bet_amount_str += event.unicode
 
     def render_card(self, card, x, y, scale=1.0):
         """Renderizar uma carta de baralho com escala personalizada"""
@@ -3130,30 +3059,6 @@ class BlackjackClient:
          no_text = self.medium_font.render("Não, Voltar", True, WHITE)
          no_text_rect = no_text.get_rect(center=no_button_rect.center)
          self.screen.blit(no_text, no_text_rect)
-
-    # RESTAURADO: Handler para ROOMS_LIST
-    def handle_rooms_list(self, payload):
-        print(f"Recebido ROOMS_LIST: {payload}")
-        if isinstance(payload, list):
-            self.room_list = []
-            for room_info in payload:
-                # Assume que o payload é uma lista de dicionários
-                self.room_list.append({
-                    "id": room_info.get("id"),
-                    "name": room_info.get("name", "Sem nome"),
-                    "playerCount": room_info.get("playerCount", 0),
-                    "hasPassword": room_info.get("hasPassword", False),
-                    "hostName": room_info.get("hostName", "Desconhecido")
-                })
-            self.success_message = "Lista de salas atualizada."
-            self.message_timer = pygame.time.get_ticks()
-        else:
-            print("Erro: Payload inválido para ROOMS_LIST")
-            self.error_message = "Erro ao ler lista de salas."
-            self.message_timer = pygame.time.get_ticks()
-
-    def handle_room_created(self, payload):
-        print(f"Recebido ROOM_CREATED: {payload}")
 
 if __name__ == "__main__":
     # Verificar se o arquivo de dados do jogador existe, se não, criar com saldo inicial
