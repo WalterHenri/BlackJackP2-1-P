@@ -1358,7 +1358,7 @@ class BlackjackClient:
         """Renderizar a tela do jogo"""
         if not self.game_state:
             self.screen.fill(GREEN)  # Fundo verde
-            self.fonts["medium"].render_to(self.screen, (self.width // 2 - 150, self.height // 2 - 20), "Aguardando estado do jogo...", WHITE)
+            self.medium_font.render_to(self.screen, (self.width // 2 - 150, self.height // 2 - 20), "Aguardando estado do jogo...", WHITE)
             return
 
         # Acesso seguro aos dados do game_state
@@ -1378,7 +1378,7 @@ class BlackjackClient:
         self.screen.fill((0, 50, 0))  # Verde base escuro
 
         # --- Renderizar Mão do Dealer --- #
-        self.fonts["medium"].render_to(self.screen, (50, 50), "Dealer:" + (f" ({game_data.get('dealerHandValue', '?')})" if game_phase != "BETTING" else ""), WHITE)
+        self.medium_font.render_to(self.screen, (50, 50), "Dealer:" + (f" ({game_data.get('dealerHandValue', '?')})" if game_phase != "BETTING" else ""), WHITE)
         dealer_cards_x = 50
         # Esconder a primeira carta do dealer se for a vez do jogador
         hide_dealer_card = (game_phase == "PLAYER_TURN" and len(dealer_hand) > 0)
@@ -1426,8 +1426,8 @@ class BlackjackClient:
             if is_current_player:
                 player_label += " - Turno"
                 
-            self.fonts["medium"].render_to(self.screen, (player_x, player_y), player_label, name_color)
-            self.fonts["small"].render_to(self.screen, (player_x, player_y + 25), f"Saldo: {balance} | Aposta: {current_bet}", WHITE)
+            self.medium_font.render_to(self.screen, (player_x, player_y), player_label, name_color)
+            self.small_font.render_to(self.screen, (player_x, player_y + 25), f"Saldo: {balance} | Aposta: {current_bet}", WHITE)
             
             # Renderizar cartas
             cards_x = player_x
@@ -1451,7 +1451,7 @@ class BlackjackClient:
             elif player_status == "STAND":
                 hand_value_text += " (Parou)"
             
-            self.fonts["medium"].render_to(self.screen, (player_x, cards_y + self.card_height + 10), hand_value_text, status_color)
+            self.medium_font.render_to(self.screen, (player_x, cards_y + self.card_height + 10), hand_value_text, status_color)
         
         # --- Renderizar Botões de Ação (Apenas para nosso jogador) --- #
         if our_player_state:
@@ -1464,14 +1464,14 @@ class BlackjackClient:
             if game_phase == "BETTING" and our_player_state.get("status") == "BETTING":
                 bet_button_rect = pygame.Rect(button_x_start, button_y, 100, 40)
                 pygame.draw.rect(self.screen, BUTTON_COLOR if not self.bet_input_active else BUTTON_HOVER_COLOR, bet_button_rect, border_radius=5)
-                self.fonts["small"].render_to(self.screen, (bet_button_rect.centerx - 35, bet_button_rect.centery - 10), "Apostar", BLACK)
+                self.small_font.render_to(self.screen, (bet_button_rect.centerx - 35, bet_button_rect.centery - 10), "Apostar", BLACK)
                 
                 # Campo de Input de Aposta
                 input_rect = pygame.Rect(button_x_start + button_spacing, button_y, 150, 40)
                 pygame.draw.rect(self.screen, WHITE, input_rect, border_radius=5)
                 pygame.draw.rect(self.screen, BLACK, input_rect, 2, 5)  # Borda
                 bet_text = self.bet_amount_str if self.bet_input_active else str(our_player_state.get("currentBet", 0))
-                self.fonts["small"].render_to(self.screen, (input_rect.x + 10, input_rect.centery - 10), bet_text, BLACK)
+                self.small_font.render_to(self.screen, (input_rect.x + 10, input_rect.centery - 10), bet_text, BLACK)
             
             # PLAYER_TURN: Botões Hit e Stand
             elif game_phase == "PLAYER_TURN" and is_our_turn and our_player_state.get("status") == "PLAYING":
@@ -1479,16 +1479,16 @@ class BlackjackClient:
                 stand_button_rect = pygame.Rect(button_x_start + button_spacing, button_y, 100, 40)
                 
                 pygame.draw.rect(self.screen, BUTTON_COLOR, hit_button_rect, border_radius=5)
-                self.fonts["small"].render_to(self.screen, (hit_button_rect.centerx - 20, hit_button_rect.centery - 10), "Hit", BLACK)
+                self.small_font.render_to(self.screen, (hit_button_rect.centerx - 20, hit_button_rect.centery - 10), "Hit", BLACK)
                 
                 pygame.draw.rect(self.screen, BUTTON_COLOR, stand_button_rect, border_radius=5)
-                self.fonts["small"].render_to(self.screen, (stand_button_rect.centerx - 30, stand_button_rect.centery - 10), "Stand", BLACK)
+                self.small_font.render_to(self.screen, (stand_button_rect.centerx - 30, stand_button_rect.centery - 10), "Stand", BLACK)
             
             # ROUND_OVER: Botão Nova Rodada
             elif game_phase == "ROUND_OVER" and self.host_mode:  # Nova rodada apenas para o host
                 new_round_button_rect = pygame.Rect(button_x_start, button_y, 180, 40)
                 pygame.draw.rect(self.screen, BUTTON_COLOR, new_round_button_rect, border_radius=5)
-                self.fonts["small"].render_to(self.screen, (new_round_button_rect.centerx - 60, new_round_button_rect.centery - 10), "Nova Rodada", BLACK)
+                self.small_font.render_to(self.screen, (new_round_button_rect.centerx - 60, new_round_button_rect.centery - 10), "Nova Rodada", BLACK)
         
         # Exibir mensagens e outras informações
         self.display_messages()
