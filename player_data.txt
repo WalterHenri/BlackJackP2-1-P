@@ -1,1 +1,1 @@
-{"Walter": 600, "Player": 200, "lucasss": 840, "Kaua": 710}
+{"Walter": 600, "Player": 200, "lucasss": 840, "Kaua": 710, "walter2": 900}
