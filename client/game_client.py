@@ -1,7 +1,7 @@
 import pygame
 import sys
 import os
-import json
+
 import uuid
 import time
 import asyncio # Adicionar import
@@ -14,6 +14,7 @@ import queue # Importar queue
 # Adicione o diretório raiz ao path para importar os módulos compartilhados
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from client.WebSocketClient import WebSocketClient
 from shared.models.player import Player
 from shared.models.game import Game
 from shared.network.message import Message, MessageType, ActionType
@@ -43,191 +44,6 @@ BUTTON_WIDTH = 200
 BUTTON_HEIGHT = 50
 
 
-# --- Classe ServerConnection REMOVIDA --- #
-
-# --- Fim da Classe ServerConnection --- #
-
-
-# --- WebSocketClient Class --- #
-class WebSocketClient:
-    def __init__(self, uri, status_callback, message_queue):
-        self._uri = uri
-        self._status_callback = status_callback
-        self._message_queue = message_queue
-        self._conn = None
-        self._thread = None
-        self._send_queue = asyncio.Queue()
-        self._stop_event = asyncio.Event()
-        self._connected = False
-        self._loop = None
-
-    def connect(self):
-        if self._thread is not None and self._thread.is_alive():
-            print("WebSocket thread já está rodando.")
-            return
-        
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_async_loop, daemon=True)
-        self._thread.start()
-
-    def _run_async_loop(self):
-        try:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.run_until_complete(self._main_loop())
-        except Exception as e:
-            print(f"Erro fatal no loop async do WebSocket: {e}")
-            self._connected = False
-            self._status_callback("Error")
-        finally:
-             if self._loop:
-                self._loop.close()
-             self._connected = False
-             print("Loop async do WebSocket finalizado.")
-
-    async def _main_loop(self):
-        while not self._stop_event.is_set():
-            try:
-                self._status_callback("Connecting...")
-                async with websockets.connect(self._uri) as websocket:
-                    self._conn = websocket
-                    self._connected = True
-                    self._status_callback("Connected")
-                    print(f"Conectado ao WebSocket em {self._uri}")
-
-                    # Iniciar tarefas concorrentes para enviar e receber
-                    recv_task = asyncio.create_task(self._recv_loop())
-                    send_task = asyncio.create_task(self._send_loop())
-                    # Corrigir erro "Passing coroutines is forbidden"
-                    stop_wait_task = asyncio.create_task(self._stop_event.wait()) 
-                    done, pending = await asyncio.wait(
-                        [recv_task, send_task, stop_wait_task], # Usar a task criada
-                        return_when=asyncio.FIRST_COMPLETED
-                    )
-
-                    # Cancelar tarefas pendentes ao sair
-                    for task in pending:
-                        task.cancel()
-                    
-                    # Verificar se saímos por causa do stop_event
-                    if self._stop_event.is_set():
-                         print("Stop event set, saindo do main loop.")
-                         break # Sai do loop while externo
-            
-            except (websockets.exceptions.ConnectionClosedError, websockets.exceptions.ConnectionClosedOK) as e:
-                print(f"WebSocket desconectado: {e.code} {e.reason}")
-            except ConnectionRefusedError:
-                print("Erro de conexão WebSocket: Conexão recusada.")
-            except OSError as e: # Captura erros como [WinError 10049] ou [Errno 11001] getaddrinfo failed
-                print(f"Erro de conexão WebSocket (OS): {e}")
-            except Exception as e:
-                print(f"Erro inesperado no main_loop WebSocket: {e}")
-            finally:
-                self._conn = None
-                self._connected = False
-                if not self._stop_event.is_set():
-                    self._status_callback("Disconnected")
-                    print("Tentando reconectar em 5 segundos...")
-                    await asyncio.sleep(5)
-                else:
-                    print("Não tentando reconectar, stop event ativo.")
-                    self._status_callback("Stopped")
-
-    async def _recv_loop(self):
-        while self._connected and not self._stop_event.is_set():
-            try:
-                message_str = await self._conn.recv()
-                try:
-                    message_dict = json.loads(message_str)
-                    self._message_queue.put(message_dict)
-                except json.JSONDecodeError:
-                    print(f"Erro: Recebido JSON inválido do WebSocket: {message_str}")
-            except (websockets.exceptions.ConnectionClosedError, websockets.exceptions.ConnectionClosedOK):
-                print("Recv loop: Conexão fechada.")
-                self._connected = False
-                break
-            except asyncio.CancelledError:
-                print("Recv loop cancelado.")
-                break
-            except Exception as e:
-                print(f"Erro no recv_loop WebSocket: {e}")
-                self._connected = False
-                break
-        print("Recv loop finalizado.")
-
-    async def _send_loop(self):
-        while self._connected and not self._stop_event.is_set():
-            try:
-                # Espera por uma mensagem na fila ou pelo stop event
-                get_task = asyncio.create_task(self._send_queue.get())
-                stop_task = asyncio.create_task(self._stop_event.wait())
-                done, pending = await asyncio.wait(
-                    [get_task, stop_task],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                
-                if stop_task in done:
-                    get_task.cancel() # Cancela a espera da fila se paramos
-                    print("Send loop: Stop event recebido.")
-                    break
-
-                if get_task in done:
-                    message_dict = get_task.result()
-                    message_str = json.dumps(message_dict)
-                    await self._conn.send(message_str)
-                    self._send_queue.task_done()
-                else: # stop_task must be done
-                     get_task.cancel()
-                     break
-
-            except (websockets.exceptions.ConnectionClosedError, websockets.exceptions.ConnectionClosedOK):
-                print("Send loop: Conexão fechada.")
-                self._connected = False
-                break
-            except asyncio.CancelledError:
-                print("Send loop cancelado.")
-                break
-            except Exception as e:
-                print(f"Erro no send_loop WebSocket: {e}")
-                self._connected = False
-                break
-        print("Send loop finalizado.")
-
-    def send(self, message_dict):
-        if not self._connected:
-            print("Erro: Tentativa de enviar mensagem WebSocket sem conexão.")
-            return False
-        try:
-            # Adiciona à fila de envio (que será processada pelo _send_loop)
-            if self._loop and self._loop.is_running():
-                 asyncio.run_coroutine_threadsafe(self._send_queue.put(message_dict), self._loop)
-                 return True
-            else:
-                 print("Erro: Loop async não está rodando para enfileirar mensagem.")
-                 return False
-        except Exception as e:
-             print(f"Erro ao enfileirar mensagem para envio: {e}")
-             return False
-
-    def is_connected(self):
-        return self._connected
-
-    def close(self):
-        print("Solicitando fechamento do WebSocket...")
-        self._stop_event.set() # Sinaliza para as tarefas pararem
-        # Tentar acordar o _send_loop se ele estiver esperando na fila
-        if self._loop and self._loop.is_running():
-             asyncio.run_coroutine_threadsafe(self._send_queue.put(None), self._loop) # Envia None para desbloquear
-
-        if self._thread is not None and self._thread.is_alive():
-            print("Aguardando thread WebSocket finalizar...")
-            self._thread.join(timeout=5) # Espera um pouco pela thread
-            if self._thread.is_alive():
-                print("Thread WebSocket não finalizou a tempo.")
-        self._thread = None
-        print("Fechamento do WebSocket solicitado.")
-
-# --- Fim da Classe WebSocketClient --- #
 
 class BlackjackClient:
     def __init__(self):
@@ -250,11 +66,32 @@ class BlackjackClient:
         self.card_height = CARD_HEIGHT
         self.my_server = None
         self.client_socket = None
-        self.server_address = "itetech-001-site1.qtempurl.com" # Endereço base do servidor
+        self.server_address = "http://itetech-001-site1.qtempurl.com:80" # Endereço padrão do servidor WebSocket
+        self.server_status = "Disconnected"
+        self.websocket_client = None
+        self._message_queue = queue.Queue()
         self.local_port = 0 # Para escuta P2P local
         self.lobby_players = [] # Inicializa a lista de jogadores do lobby
-        self.websocket_client = None # Instância do novo WebSocketClient
-        self.server_status = "Disconnected"
+        
+        # Variáveis para o navegador de salas
+        self.room_list = []
+        self.selected_room_index = -1
+        self.room_browser_scroll = 0
+        self.connection_mode = "online" # "online" ou "local"
+        
+        # Variáveis para a tela de juntar-se a uma sala
+        self.room_id_input = ""
+        self.room_id_input_active = False
+        self.password_input = ""
+        self.password_input_active = False
+        
+        # Variáveis para mensagens de erro/sucesso
+        self.error_message = ""
+        self.success_message = ""
+        self.message_timer = 0
+        
+        # Variáveis importantes do jogo
+        self.room_id = ""
         self.current_bet = 0
         self.bet_amount = 100  # Valor inicial da aposta
         self.bet_amount_str = "100"  # String para entrada de texto da aposta
@@ -267,43 +104,14 @@ class BlackjackClient:
         self.game = None # Instância do jogo local (para single-player)
         self.game_state = None # Estado recebido do servidor (para multiplayer)
         self.host_mode = False
-        self.max_players = 8 # Definir número máximo de jogadores para criar sala
-
-        # Novo estado para seleção de modo
-        self.connection_mode = "online" # Modo padrão
-        self.room_list = []
-        self.room_id = ""
-        self.room_id_input = ""
-        self.room_id_input_active = False
+        self.max_players = 4 # Definir número máximo de jogadores para criar sala
         self.room_name_input = ""
         self.room_name_input_active = False
-        self.password_input = ""
-        self.password_input_active = False
         self.connection_mode_selection = "online"  # Modo selecionado na tela de criação/busca de sala
-        self.room_browser_scroll = 0
-        self.selected_room_index = -1
-        self.error_message = ""
-        self.success_message = ""
-        self.message_timer = 0
-
-        # Fontes
-        self.title_font = pygame.font.SysFont("Arial", 48)
-        self.large_font = pygame.font.SysFont("Arial", 36)
-        self.medium_font = pygame.font.SysFont("Arial", 24)
-        self.small_font = pygame.font.SysFont("Arial", 18)
-
-        # Carregar sprites das cartas
-        self.card_sprites = CardSprites()
-        # Dicionário para armazenar imagens de cartas por display_name
-        self.card_images = {}
-        # Inicializar com uma carta de verso (para cartas ocultas)
-        self.card_images["card_back"] = self.card_sprites.get_card_back()
-
-        # Adicionar variável para controlar a exibição do pop-up de tutorial
         self.show_tutorial = False
-
-        # Fila para comunicação entre thread WebSocket e thread principal Pygame
-        self._message_queue = queue.Queue() # Criar a fila segura
+        self.title_font = pygame.font.Font(None, 48)
+        self.medium_font = pygame.font.Font(None, 24)
+        self.small_font = pygame.font.Font(None, 18)
 
     def start(self):
         """Iniciar o loop principal do jogo"""
@@ -741,7 +549,7 @@ class BlackjackClient:
             self.show_tutorial = not self.show_tutorial
             return
             
-        # Se o tutorial estiver aberto e o usuário clicar fora dele, fechar o tutorial
+        
         if self.show_tutorial and event.type == pygame.MOUSEBUTTONDOWN:
             tutorial_rect = pygame.Rect(SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2 - 150, 400, 300)
             if not tutorial_rect.collidepoint(event.pos):
@@ -760,24 +568,44 @@ class BlackjackClient:
 
     def handle_online_click(self):
         """Manipular clique no botão Jogar Online - Conecta WebSocket ou vai para browser."""
-        # ... (lógica para garantir nome do jogador)
+        # Certifique-se de que o nome não está no modo de edição
+        if self.name_input_active:
+            self.name_input_active = False
+            if not self.player_name:
+                self.player_name = "Player"
+            self.player_balance = get_player_balance(self.player_name)
 
+        # Verificar e corrigir o endereço do servidor
+        print(f"[DEBUG] Tentando conectar em: {self.server_address}")
+        # Verificar se o endereço é válido (tem ':' para separar host e porta)
+        if ":" not in self.server_address:
+            self.server_address = "localhost:8080"  # Redefinir para o padrão
+            print(f"[DEBUG] Endereço inválido, usando o padrão: {self.server_address}")
+        
+        # Garantir que localhost seja usado quando apropriado
+        if self.server_address.startswith("localhost") or self.server_address.startswith("127.0.0.1"):
+            print("[DEBUG] Usando endereço local")
+        
         # Conectar WebSocket se não estiver conectado
         if not self.websocket_client or not self.websocket_client.is_connected():
-             self.connect_websocket()
+            print(f"[DEBUG] Tentando conexão nova com WebSocket: {self.server_address}")
+            self.connect_websocket()
+            # Mostrar mensagem de status para o usuário
+            self.success_message = "Conectando ao servidor..."
+            self.message_timer = pygame.time.get_ticks()
         else:
-             # Se já conectado, verifica se já estamos em uma sala
-             print("Já conectado ao WebSocket.")
-             if not self.room_id: # Só vai para o browser se NÃO estiver em uma sala
-                 self.current_view = "room_browser"
-                 self.send_websocket_message("LIST_ROOMS")
-             else:
-                  # Se já está em sala, talvez não fazer nada ou ir direto pro lobby?
-                  # Por segurança, não mudar a view aqui se já tem room_id.
-                  print(f"Já conectado e em uma sala ({self.room_id}). Não mudando view.")
-                  # Opcional: Forçar refresh da lista se estiver no browser?
-                  if self.current_view == "room_browser":
-                       self.send_websocket_message("LIST_ROOMS")
+            # Se já conectado, verifica se já estamos em uma sala
+            print("[DEBUG] Já conectado ao WebSocket.")
+            if not self.room_id: # Só vai para o browser se NÃO estiver em uma sala
+               self.current_view = "room_browser"
+               self.send_websocket_message("LIST_ROOMS")
+            else:
+               # Se já está em sala, talvez não fazer nada ou ir direto pro lobby?
+               # Por segurança, não mudar a view aqui se já tem room_id.
+               print(f"[DEBUG] Já conectado e em uma sala ({self.room_id}). Não mudando view.")
+               # Opcional: Forçar refresh da lista se estiver no browser?
+               if self.current_view == "room_browser":
+                   self.send_websocket_message("LIST_ROOMS")
 
     def handle_local_network_click(self):
         """Manipular clique no botão Jogar em Rede Local"""
@@ -937,66 +765,38 @@ class BlackjackClient:
         """Lidar com eventos durante o jogo"""
         # Se estamos no modo online, usar a função de tratamento específica
         is_online = self.websocket_client and self.websocket_client.is_connected()
-        if is_online:
-            # Tratar o botão de voltar (comum a ambos os modos)
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                menu_button = pygame.Rect(10, 10, 120, 40)
-                if menu_button.collidepoint(event.pos):
-                    self.current_view = "confirm_leave_game"
-                    return
-            
-            # Delegar os eventos de gameplay online para o handler específico
-            self.handle_game_events(event)
-            return
-
-        # Código original para o modo offline
+        
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = event.pos
-
+            
+            # Botão de voltar ao menu (comum a ambos os modos)
+            menu_button = pygame.Rect(10, 10, 120, 40)
+            if menu_button.collidepoint(mouse_pos):
+                self.current_view = "confirm_leave_game"
+                return
+            
             # Verificar se é nossa vez (para botões Hit/Stand)
             is_our_turn = False
             if self.game_state and "players" in self.game_state and "currentPlayerIndex" in self.game_state and self.game_state["currentPlayerIndex"] >= 0:
-                 try:
-                      current_player_index = self.game_state["currentPlayerIndex"]
-                      # Adicionar verificação de índice válido
-                      if 0 <= current_player_index < len(self.game_state["players"]):
-                           is_our_turn = (self.game_state["players"][current_player_index]["playerId"] == self.player.player_id)
-                 except IndexError:
-                      print("Erro: Índice do jogador atual inválido no game_state.")
-                      is_our_turn = False # Trata como não sendo nossa vez se houver erro
-
-            # Botão de voltar ao menu (ou sair da partida)
-            # A posição e visibilidade podem precisar de ajuste
-            is_multiplayer = self.websocket_client is not None and self.websocket_client.is_connected()
-            # Por ora, usamos o botão existente que aparece com < 4 players
-            # Poderia ser um botão "Sair da Partida" sempre visível no online?
-            show_back_button = not is_multiplayer # Exemplo: mostra só no single player
-            # Para o teste, vamos permitir acionar a confirmação mesmo no single player por enquanto
-            show_back_button = True # Temporário para testar
-
-            if show_back_button:
-                menu_button = pygame.Rect(10, 10, 120, 40)
-                if menu_button.collidepoint(mouse_pos):
-                    if is_multiplayer:
-                        # Em jogo online, pede confirmação
-                        self.current_view = "confirm_leave_game"
-                    else:
-                        # Em jogo single player, volta direto
-                        self.current_view = "menu"
-                        self.game = None # Limpa jogo local
-                        self.game_state = None
-                        self.host_mode = False
-                    return # Sai do handler após clicar no botão
-
+                try:
+                    current_player_index = self.game_state["currentPlayerIndex"]
+                    # Adicionar verificação de índice válido
+                    if 0 <= current_player_index < len(self.game_state["players"]):
+                        is_our_turn = (self.game_state["players"][current_player_index]["playerId"] == self.player.player_id)
+                except IndexError:
+                    print("Erro: Índice do jogador atual inválido no game_state.")
+                    is_our_turn = False # Trata como não sendo nossa vez se houver erro
+            
             # --- Lógica dos botões de ação (Hit, Stand, Bet, New Round) --- #
             FOOTER_HEIGHT = 150
             footer_start_y = SCREEN_HEIGHT - FOOTER_HEIGHT
             controls_x = 20
             controls_width = SCREEN_WIDTH // 2 - 40
             button_y = footer_start_y + 45
-
+            
             if self.game_state:
                 game_status = self.game_state.get("state")
+                
                 # Botões de ajuste e confirmação de aposta
                 if game_status == "BETTING":
                     bet_amount_x = controls_x + 120
@@ -1005,22 +805,36 @@ class BlackjackClient:
                     decrease_bet_button = pygame.Rect(bet_amount_x + bet_amount_text.get_width() + 15, btn_y, btn_width, btn_height)
                     increase_bet_button = pygame.Rect(decrease_bet_button.right + 10, btn_y, btn_width, btn_height)
                     bet_button = pygame.Rect(controls_x, button_y, controls_width, 50)
-                    if decrease_bet_button.collidepoint(mouse_pos): self.decrease_bet(); return
-                    if increase_bet_button.collidepoint(mouse_pos): self.increase_bet(); return
-                    if bet_button.collidepoint(mouse_pos): self.place_bet(); return
-
+                    
+                    if decrease_bet_button.collidepoint(mouse_pos): 
+                        self.decrease_bet()
+                        return
+                    if increase_bet_button.collidepoint(mouse_pos): 
+                        self.increase_bet()
+                        return
+                    if bet_button.collidepoint(mouse_pos): 
+                        self.place_bet()
+                        return
+                
                 # Botões Hit/Stand
                 elif game_status == "PLAYER_TURN" and is_our_turn:
                     button_width_half = (controls_width - 10) // 2
                     hit_button = pygame.Rect(controls_x, button_y, button_width_half, 50)
                     stand_button = pygame.Rect(controls_x + button_width_half + 10, button_y, button_width_half, 50)
-                    if hit_button.collidepoint(mouse_pos): self.hit(); return
-                    if stand_button.collidepoint(mouse_pos): self.stand(); return
-
+                    
+                    if hit_button.collidepoint(mouse_pos): 
+                        self.hit()
+                        return
+                    if stand_button.collidepoint(mouse_pos): 
+                        self.stand()
+                        return
+                
                 # Botão Nova Rodada
                 elif game_status == "GAME_OVER":
                     new_round_button = pygame.Rect(controls_x, button_y, controls_width, 50)
-                    if new_round_button.collidepoint(mouse_pos): self.new_round(); return
+                    if new_round_button.collidepoint(mouse_pos): 
+                        self.new_round()
+                        return
 
     def update(self):
         """Atualizar o estado do jogo"""
@@ -1082,9 +896,6 @@ class BlackjackClient:
              self.render_game()
              # Depois renderiza o popup de confirmação por cima
              self.render_confirm_leave_game()
-
-        # Renderizar mensagens de erro ou sucesso (por cima de tudo)
-        self.display_messages()
 
         pygame.display.flip()
 
@@ -1596,7 +1407,6 @@ class BlackjackClient:
                     except ValueError:
                         self.error_message = "Valor de aposta inválido."
                         self.message_timer = pygame.time.get_ticks()
-                        
                 elif input_rect.collidepoint(mouse_pos):
                     self.bet_input_active = True
                     self.bet_amount_str = ""
@@ -1819,36 +1629,78 @@ class BlackjackClient:
 
     def hit(self):
         """Pedir mais uma carta"""
-        if not self.host_mode:
-            # Cliente envia solicitação para o host
-            hit_message = Message.create_action_message(
-                self.player.player_id,
-                ActionType.HIT
-            )
-            self.p2p_manager.send_message(hit_message)
+        if self.current_view != "game" or not self.game_state or self.game_state.get("state") != "PLAYER_TURN":
+            print("Não é possível pedir carta agora")
+            return
+
+        # Verificar se é a nossa vez de jogar
+        is_our_turn = False
+        if "currentPlayerIndex" in self.game_state and self.game_state["currentPlayerIndex"] >= 0:
+            try:
+                current_player_index = self.game_state["currentPlayerIndex"]
+                if 0 <= current_player_index < len(self.game_state["players"]):
+                    current_player = self.game_state["players"][current_player_index]
+                    is_our_turn = (current_player["playerId"] == self.player.player_id)
+            except Exception as e:
+                print(f"Erro ao verificar turno: {e}")
+
+        if not is_our_turn:
+            print("Não é sua vez de jogar")
+            self.error_message = "Aguarde sua vez"
+            self.message_timer = pygame.time.get_ticks()
+            return
+        
+        # Enviar comando HIT para o servidor
+        if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
+            print(f"Enviando comando HIT para sala {self.room_id}")
+            payload = {"roomId": self.room_id}
+            if self.send_websocket_message("HIT", payload):
+                self.success_message = "Pedindo carta..."
+                self.message_timer = pygame.time.get_ticks()
+            else:
+                self.error_message = "Falha ao pedir carta"
+                self.message_timer = pygame.time.get_ticks()
         else:
-            # Host processa diretamente
-            success, message = self.game.hit(self.player.player_id)
-            if success:
-                self.game.messages.append(message)
-            self.broadcast_game_state()
+            self.error_message = "Não conectado ao servidor"
+            self.message_timer = pygame.time.get_ticks()
 
     def stand(self):
         """Parar de pedir cartas"""
-        if not self.host_mode:
-            # Cliente envia solicitação para o host
-            stand_message = Message.create_action_message(
-                self.player.player_id,
-                ActionType.STAND
-            )
-            self.p2p_manager.send_message(stand_message)
-        else:
-            # Host processa diretamente
-            success, message = self.game.stand(self.player.player_id)
-            if success:
-                self.game.messages.append(message)
-            self.broadcast_game_state()
+        if self.current_view != "game" or not self.game_state or self.game_state.get("state") != "PLAYER_TURN":
+            print("Não é possível parar agora")
+            return
 
+        # Verificar se é a nossa vez de jogar
+        is_our_turn = False
+        if "currentPlayerIndex" in self.game_state and self.game_state["currentPlayerIndex"] >= 0:
+            try:
+                current_player_index = self.game_state["currentPlayerIndex"]
+                if 0 <= current_player_index < len(self.game_state["players"]):
+                    current_player = self.game_state["players"][current_player_index]
+                    is_our_turn = (current_player["playerId"] == self.player.player_id)
+            except Exception as e:
+                print(f"Erro ao verificar turno: {e}")
+
+        if not is_our_turn:
+            print("Não é sua vez de jogar")
+            self.error_message = "Aguarde sua vez"
+            self.message_timer = pygame.time.get_ticks()
+            return
+        
+        # Enviar comando STAND para o servidor
+        if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
+            print(f"Enviando comando STAND para sala {self.room_id}")
+            payload = {"roomId": self.room_id}
+            if self.send_websocket_message("STAND", payload):
+                self.success_message = "Parando de pedir cartas..."
+                self.message_timer = pygame.time.get_ticks()
+            else:
+                self.error_message = "Falha ao passar a vez"
+                self.message_timer = pygame.time.get_ticks()
+        else:
+            self.error_message = "Não conectado ao servidor"
+            self.message_timer = pygame.time.get_ticks()
+            
     def place_bet(self):
         """Envia a aposta do jogador para o servidor."""
         if self.current_view == "game" and self.game_state and self.game_state.get("state") == "BETTING":
@@ -1864,8 +1716,6 @@ class BlackjackClient:
                 if self.send_websocket_message("PLACE_BET", payload):
                     self.success_message = f"Aposta de {self.bet_amount} enviada."
                     self.message_timer = pygame.time.get_ticks()
-                    # Opcional: Atualizar status local do jogador para 'Apostou' ou aguardar confirmação
-                    # Ex: self.game_state['players'][my_index]['status'] = 'Bet Placed'
                 else:
                     self.error_message = "Falha ao enviar aposta."
                     self.message_timer = pygame.time.get_ticks()
@@ -1875,934 +1725,110 @@ class BlackjackClient:
         else:
             print("Não é possível apostar agora (view ou estado incorreto).")
 
-    def start_game(self):
-        """Inicia o jogo (se for o host) e notifica o servidor."""
-        if not self.host_mode:
-            print("Apenas o host pode iniciar o jogo.")
-            self.error_message = "Aguardando o host iniciar o jogo."
-            self.message_timer = pygame.time.get_ticks()
-            return
+    # --- NOVA FUNÇÃO DE RENDERIZAÇÃO --- #
+    def render_confirm_leave_game(self):
+         """Renderiza o pop-up de confirmação para sair do jogo."""
+         # Fundo escurecido
+         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+         overlay.fill((0, 0, 0, 180)) # Preto semi-transparente
+         self.screen.blit(overlay, (0, 0))
 
-        if len(self.lobby_players) < 1: # Mínimo 1 (host)
-             print("Não há jogadores suficientes para iniciar.")
-             self.error_message = "Jogadores insuficientes."
-             self.message_timer = pygame.time.get_ticks()
-             return
+         # Janela do Pop-up
+         popup_width = 400
+         popup_height = 200
+         popup_x = SCREEN_WIDTH // 2 - popup_width // 2
+         popup_y = SCREEN_HEIGHT // 2 - popup_height // 2
+         popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
+         
+         pygame.draw.rect(self.screen, (0, 60, 0), popup_rect, border_radius=15)
+         pygame.draw.rect(self.screen, WHITE, popup_rect, 3, border_radius=15)
 
-        print("Iniciando jogo como host...")
-        # Cria a instância do jogo local
-        self.game = Game() 
+         # Mensagem de Confirmação
+         title_font = self.medium_font
+         text_font = self.small_font
+         
+         title_text = title_font.render("Sair da Partida?", True, WHITE)
+         title_rect = title_text.get_rect(center=(popup_rect.centerx, popup_y + 40))
+         self.screen.blit(title_text, title_rect)
 
-        # Adiciona os jogadores atuais do lobby ao jogo
-        if not self.player: 
-             self.error_message = "Erro interno: Host não definido."
-             self.message_timer = pygame.time.get_ticks()
-             print("Erro: Tentando iniciar jogo sem self.player definido.")
-             # Tenta criar o player novamente se não existir por algum motivo
-             if self.player_id and self.player_name:
-                 self.player = Player(self.player_name, self.player_balance, self.player_id)
-        else:
-                 self.current_view = "menu" # Volta pro menu se não tem dados do host
-                 return
-        
-        # Adiciona jogadores ao objeto Game
-        players_added_to_game = []
-        for player_info in self.lobby_players:
-            player_id = player_info.get('id')
-            player_name = player_info.get('name')
-            if player_id and player_name:
-                # Se for o host, usa o objeto self.player já existente
-                if player_id == self.player_id:
-                    if self.player not in players_added_to_game: # Evita duplicar
-                         self.game.add_player(self.player) 
-                         players_added_to_game.append(self.player)
-                         print(f"Adicionado host ao jogo: {self.player.name} ({self.player.player_id})")
-                else:
-                    # Cria objetos Player para os outros (saldo inicial padrão?)
-                    other_player = Player(player_name, 1000, player_id)
-                    if other_player not in players_added_to_game:
-                         self.game.add_player(other_player)
-                         players_added_to_game.append(other_player)
-                         print(f"Adicionado jogador ao jogo: {other_player.name} ({other_player.player_id})")
-            else:
-                 print(f"Aviso: Informação inválida para jogador no lobby: {player_info}")
+         message_text = text_font.render("Tem certeza que deseja sair?", True, (200, 200, 200))
+         message_rect = message_text.get_rect(center=(popup_rect.centerx, popup_y + 80))
+         self.screen.blit(message_text, message_rect)
+         
+         message_text2 = text_font.render("(O progresso atual será perdido)", True, (200, 200, 200))
+         message_rect2 = message_text2.get_rect(center=(popup_rect.centerx, popup_y + 100))
+         self.screen.blit(message_text2, message_rect2)
 
-        if not self.game.players: # Verifica se pelo menos um jogador foi adicionado
-             self.error_message = "Erro ao adicionar jogadores ao jogo."
-             self.message_timer = pygame.time.get_ticks()
-             print("Erro: Nenhum jogador adicionado ao objeto Game.")
-             self.game = None # Reseta se deu erro
-             return
+         # Botões Sim/Não
+         button_width = 150
+         button_height = 50
+         button_y = popup_y + popup_height - 70
+         mouse_pos = pygame.mouse.get_pos()
 
-        # Inicia a lógica do jogo localmente 
-        # self.game.initialize_game(self.player) # Passa o host ou a lista?
-        # Adaptação: initialize_game pode não ser necessário se add_player configura
-        self.game.dealer_hand = [] # Garante que mão do dealer está vazia
-        self.game.deal_initial_cards() # Exemplo: distribuir cartas iniciais
-        self.game_state = self.game.get_game_state() # Pega o estado inicial
+         # Botão Sim
+         yes_button_rect = pygame.Rect(popup_x + 30, button_y, button_width, button_height)
+         yes_color = (180, 0, 0) if yes_button_rect.collidepoint(mouse_pos) else (140, 0, 0)
+         pygame.draw.rect(self.screen, yes_color, yes_button_rect, border_radius=10)
+         pygame.draw.rect(self.screen, WHITE, yes_button_rect, 2, border_radius=10)
+         yes_text = self.medium_font.render("Sim, Sair", True, WHITE)
+         yes_text_rect = yes_text.get_rect(center=yes_button_rect.center)
+         self.screen.blit(yes_text, yes_text_rect)
 
-        print("Jogo inicializado localmente. Notificando servidor...")
-        # Envia mensagem para o servidor indicando que o jogo começou
-        payload = {"roomId": self.room_id}
-        self.send_websocket_message("START_GAME", payload)
+         # Botão Não
+         no_button_rect = pygame.Rect(popup_x + popup_width - button_width - 30, button_y, button_width, button_height)
+         no_color = (0, 150, 0) if no_button_rect.collidepoint(mouse_pos) else (0, 120, 0)
+         pygame.draw.rect(self.screen, no_color, no_button_rect, border_radius=10)
+         pygame.draw.rect(self.screen, WHITE, no_button_rect, 2, border_radius=10)
+         no_text = self.medium_font.render("Não, Voltar", True, WHITE)
+         no_text_rect = no_text.get_rect(center=no_button_rect.center)
+         self.screen.blit(no_text, no_text_rect)
 
-        # Muda para a tela de jogo
-        self.current_view = "game"
-        self.success_message = "Jogo iniciado!"
-        self.message_timer = pygame.time.get_ticks()
-
-    def new_round(self):
-        """Envia comando NEW_ROUND para o servidor (se for o host).""" # Descrição atualizada
-        # No modo online, apenas o host (ou o servidor automaticamente) inicia nova rodada.
-        # O cliente apenas renderiza o estado recebido. No máximo, o host envia um comando.
-        if self.current_view == "game" and self.game_state and self.game_state.get("state") == "GAME_OVER":
-            # Simplificação: Qualquer jogador pode tentar iniciar (servidor valida se é host)
-            if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
-                print(f"Solicitando NOVA RODADA para sala {self.room_id}")
-                payload = {"roomId": self.room_id}
-                if self.send_websocket_message("NEW_ROUND", payload):
-                    self.success_message = "Solicitação de nova rodada enviada."
-                    self.message_timer = pygame.time.get_ticks()
-                    # O cliente deve aguardar o novo GAME_STATE do servidor
-                else:
-                    self.error_message = "Falha ao solicitar nova rodada."
-                    self.message_timer = pygame.time.get_ticks()
-            else:
-                self.error_message = "Não conectado ou fora de uma sala."
-                self.message_timer = pygame.time.get_ticks()
-        else:
-            print("Não é possível iniciar nova rodada agora (jogo não acabou?).")
-
-    def leave_lobby(self):
-        """Sair do lobby e voltar ao menu (envia comando LEAVE_ROOM)"""
-        if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
-            print(f"Enviando comando LEAVE_ROOM para sala {self.room_id}")
-            self.send_websocket_message("LEAVE_ROOM", {"roomId": self.room_id})
-        
-        # Limpar estado local
-        self.game = None
-        self.game_state = None
-        self.current_view = "menu"
-        self.host_mode = False
-        self.room_id = ""
-        # Limpar P2P Manager (se ainda existir)
-        if self.p2p_manager: ...
-
-    def increase_bet(self):
-        """Aumentar o valor da aposta"""
-        # Verificar se estamos no modo online ou offline
-        is_online = self.websocket_client and self.websocket_client.is_connected()
-        
-        # Determinar o saldo atual com base no modo de jogo
-        if is_online and hasattr(self, 'our_player_state') and self.our_player_state:
-            current_balance = self.our_player_state.get("balance", 0)
-        else:
-            current_balance = getattr(self.player, "balance", 1000)
-        
-        # Aumentar a aposta em 10
-        self.bet_amount += 10
-        
-        # Limitar ao saldo máximo disponível
-        if self.bet_amount > current_balance:
-            self.bet_amount = current_balance
-            
-        print(f"Aumentando aposta para {self.bet_amount}")
-
-    def decrease_bet(self):
-        """Diminuir o valor da aposta"""
-        # Diminuir a aposta em 10
-        self.bet_amount -= 10
-        
-        # Definir o valor mínimo de aposta
-        min_bet = 10
-        if self.bet_amount < min_bet:
-            self.bet_amount = min_bet
-            
-        print(f"Diminuindo aposta para {self.bet_amount}")
-
-    def create_bot(self, name, strategy="default"):
-        """Criar um bot com a estratégia especificada
-        Estratégias:
-        - default: Para em 17+, pede em 16-
-        - aggressive: Para em 18+, pede em 17-
-        - conservative: Para em 15+, pede em 14-
-        """
-        bot_player = Player(name, 1000, str(uuid.uuid4()))
-        bot_player.strategy = strategy
-        return bot_player
-
-    def start_single_player(self, num_bots=1):
-        """Iniciar jogo single player contra o número selecionado de bots"""
-        print(f"Iniciando jogo single player com {self.player_name}, saldo: {self.player_balance}")
-        
-        # Criar jogador
-        self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
-        
-        # Criar novo jogo
-        self.game = Game()
-        
-        # Adicionar jogador humano primeiro (para garantir que começa)
-        self.game.initialize_game(self.player)
-        
-        # Criar e adicionar bots com estratégias diferentes
-        bot_names = ["Bot Conservador", "Bot Normal", "Bot Agressivo"]
-        bot_strategies = ["conservative", "default", "aggressive"]
-        
-        # Adicionar apenas o número de bots selecionado
-        for i in range(min(num_bots, 3)):
-            bot_player = self.create_bot(bot_names[i], bot_strategies[i])
-            self.game.add_player(bot_player)
-        
-        # Configurar como host e iniciar o jogo
-        self.host_mode = True
-        self.current_view = "game"
-        
-        # Iniciar o jogo
-        self.game.start_game()
-        self.game_state = self.game.get_game_state()
-        self.game.messages.append(f"Jogo iniciado contra {num_bots} bot(s)!")
-        
-        # Garantir que as apostas iniciais sejam feitas
-        initial_bet = min(100, self.player.balance)  # Não apostar mais do que o jogador tem
-        self.game.place_bet(self.player.player_id, initial_bet)  # Aposta inicial do jogador
-        
-        # Apostas iniciais dos bots
-        for player in self.game.state_manager.players:
-            if player.player_id != self.player.player_id:
-                self.game.place_bet(player.player_id, 100)
-        
-        # Distribuir cartas iniciais
-        self.game._deal_initial_cards()
-        self.broadcast_game_state()
-
-    def bot_play(self):
-        """Lógica de jogo dos bots"""
-        if not self.game_state:
-            return
-
-        current_player = self.game_state["players"][self.game_state["currentPlayerIndex"]]
-        # Verifique se o jogador atual é um bot (nome começa com "Bot")
-        if not current_player["name"].startswith("Bot"):
-            return
-
-        # Lógica de apostas do bot
-        if self.game_state["state"] == "BETTING":
-            # Bot sempre aposta 100
-            self.game.place_bet(current_player["id"], 100)
-            self.game.messages.append(f"{current_player['name']} apostou 100")
-            self.broadcast_game_state()
-            return
-
-        # Lógica de jogo do bot
-        if self.game_state["state"] == "PLAYER_TURN":
-            # Verificar se o jogador humano estourou
-            human_player = next((p for p in self.game_state["players"] if not p["name"].startswith("Bot")), None)
-            if human_player and human_player["is_busted"]:
-                # Se o jogador humano estourou, o bot para
-                success, message = self.game.stand(current_player["id"])
-                if success:
-                    self.game.messages.append(f"{current_player['name']} parou")
-                self.broadcast_game_state()
-                return
-
-            # Esperar um pouco para simular "pensamento"
-            time.sleep(0.5)  # Reduzido para manter o jogo fluido com múltiplos bots
-
-            # Encontrar a estratégia do bot atual
-            hand_value = current_player["hand_value"]
-            bot_player = next((p for p in self.game.state_manager.players if p.player_id == current_player["id"]), None)
-            
-            if bot_player:
-                strategy = getattr(bot_player, "strategy", "default")
-                
-                # Aplicar estratégia
-                limit = 17  # Padrão
-                if strategy == "aggressive":
-                    limit = 18
-                elif strategy == "conservative":
-                    limit = 15
-                
-                if hand_value < limit:
-                    success, message = self.game.hit(current_player["id"])
-                    if success:
-                        self.game.messages.append(f"{current_player['name']} pediu carta")
-                else:
-                    success, message = self.game.stand(current_player["id"])
-                    if success:
-                        self.game.messages.append(f"{current_player['name']} parou")
-
-            self.broadcast_game_state()
-
-    def check_winner(self):
-        """Verificar o vencedor da rodada"""
-        if not self.game_state:
-            return
-
-        players = self.game_state["players"]
-        
-        # Separar jogadores humanos e bots
-        human_player = next((p for p in players if not p["name"].startswith("Bot")), None)
-        if not human_player:
-            return
-            
-        active_players = [p for p in players if not p["is_busted"]]
-        
-        # Se todos estouraram, não há vencedor
-        if not active_players:
-            self.game.messages.append("Todos estouraram! Ninguém ganha.")
-            self.game_state["state"] = "GAME_OVER"
-            return
-            
-        # Se apenas um jogador não estourou, ele é o vencedor
-        if len(active_players) == 1:
-            winner = active_players[0]
-            self.game.messages.append(f"{winner['name']} venceu! (Único jogador não estourado)")
-            
-            # Processar resultado (apenas para jogadores humanos)
-            if winner["name"] == self.player.name:
-                old_balance = self.player.balance
-                # Calcular o prêmio (soma de todas as apostas)
-                total_pot = sum(p["current_bet"] for p in players)
-                # Atualizar o saldo (já incluído no objeto player)
-                new_balance = self.player.balance
-                print(f"Jogador {self.player.name} venceu! Saldo atualizado: {old_balance} -> {new_balance} (ganhou {total_pot})")
-                # Salvar no arquivo
-                update_player_balance(self.player.name, new_balance)
-                self.player_balance = new_balance
-                
-            self.game_state["state"] = "GAME_OVER"
-            return
-            
-        # Se múltiplos jogadores não estouraram, encontre o maior valor
-        max_value = max(p["hand_value"] for p in active_players)
-        winners = [p for p in active_players if p["hand_value"] == max_value]
-        
-        # Anunciar vencedores
-        if len(winners) == 1:
-            self.game.messages.append(f"{winners[0]['name']} venceu com {max_value} pontos!")
-            
-            # Processar resultado (apenas para jogadores humanos)
-            if winners[0]["name"] == self.player.name:
-                old_balance = self.player.balance
-                # Atualizar o saldo (já incluído no objeto player)
-                new_balance = self.player.balance
-                print(f"Jogador {self.player.name} venceu! Saldo atualizado: {old_balance} -> {new_balance}")
-                # Salvar no arquivo
-                update_player_balance(self.player.name, new_balance)
-                self.player_balance = new_balance
-        else:
-            winner_names = ", ".join(w["name"] for w in winners)
-            self.game.messages.append(f"Empate entre {winner_names} com {max_value} pontos!")
-            
-            # Verificar se o jogador humano está entre os vencedores
-            if any(w["name"] == self.player.name for w in winners):
-                old_balance = self.player.balance
-                # Atualizar o saldo (já incluído no objeto player)
-                new_balance = self.player.balance
-                print(f"Jogador {self.player.name} empatou! Saldo atualizado: {old_balance} -> {new_balance}")
-                # Salvar no arquivo
-                update_player_balance(self.player.name, new_balance)
-                self.player_balance = new_balance
-            
-        self.game_state["state"] = "GAME_OVER"
-        self.broadcast_game_state()
-
-    def render_bot_selection(self):
-        """Renderizar a tela de seleção de bots"""
-        # Background
-        self.screen.fill((0, 40, 0))  # Verde escuro base
-        
-        # Título
-        title_bg = pygame.Rect(0, 0, SCREEN_WIDTH, 120)
-        pygame.draw.rect(self.screen, (0, 30, 0), title_bg)
-        
-        title = self.title_font.render("Selecione o Número de Bots", True, (240, 240, 240))
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 60))
-        self.screen.blit(title, title_rect)
-        
-        def draw_selection_button(rect, text, color, hover_color):
-            """Desenhar botão de seleção com efeito hover"""
-            mouse_pos = pygame.mouse.get_pos()
-            is_hover = rect.collidepoint(mouse_pos)
-            
-            # Sombra
-            shadow_rect = rect.copy()
-            shadow_rect.y += 2
-            pygame.draw.rect(self.screen, (0, 0, 0, 128), shadow_rect, border_radius=15)
-            
-            # Botão
-            current_color = hover_color if is_hover else color
-            pygame.draw.rect(self.screen, current_color, rect, border_radius=15)
-            
-            # Borda
-            if is_hover:
-                pygame.draw.rect(self.screen, (255, 255, 255, 128), rect, 2, border_radius=15)
-            
-            # Texto
-            text_surface = self.medium_font.render(text, True, (240, 240, 240))
-            text_rect = text_surface.get_rect(center=rect.center)
-            self.screen.blit(text_surface, text_rect)
-        
-        # Botões para selecionar o número de bots
-        button_width = 300
-        button_height = 60
-        button_x = SCREEN_WIDTH // 2 - button_width // 2
-        
-        # Cores dos botões
-        button_colors = [
-            ((0, 100, 180), (0, 140, 230)),  # 1 Bot
-            ((0, 130, 150), (0, 170, 190)),  # 2 Bots
-            ((0, 150, 120), (0, 190, 160)),  # 3 Bots
-            ((150, 30, 30), (190, 50, 50))   # Voltar
-        ]
-        
-        # Botão para 1 bot
-        bot1_button = pygame.Rect(button_x, 200, button_width, button_height)
-        draw_selection_button(bot1_button, "Jogar com 1 Bot", button_colors[0][0], button_colors[0][1])
-        
-        # Botão para 2 bots
-        bot2_button = pygame.Rect(button_x, 280, button_width, button_height)
-        draw_selection_button(bot2_button, "Jogar com 2 Bots", button_colors[1][0], button_colors[1][1])
-        
-        # Botão para 3 bots
-        bot3_button = pygame.Rect(button_x, 360, button_width, button_height)
-        draw_selection_button(bot3_button, "Jogar com 3 Bots", button_colors[2][0], button_colors[2][1])
-        
-        # Botão para voltar
-        back_button = pygame.Rect(button_x, 460, button_width, button_height)
-        draw_selection_button(back_button, "Voltar", button_colors[3][0], button_colors[3][1])
-        
-        # Descrição dos tipos de bots
-        info_y = 550
-        info_texts = [
-            "Bot Conservador: Para com 15+ pontos",
-            "Bot Normal: Para com 17+ pontos",
-            "Bot Agressivo: Para com 18+ pontos"
-        ]
-        
-        info_rect = pygame.Rect(SCREEN_WIDTH // 2 - 300, info_y - 20, 600, 150)
-        pygame.draw.rect(self.screen, (0, 50, 0), info_rect, border_radius=10)
-        pygame.draw.rect(self.screen, (0, 80, 0), info_rect, 2, border_radius=10)
-        
-        for i, text in enumerate(info_texts):
-            info_text = self.small_font.render(text, True, (220, 220, 220))
-            text_rect = info_text.get_rect(centerx=SCREEN_WIDTH // 2, y=info_y + i * 30)
-            self.screen.blit(info_text, text_rect)
-
-    def render_message(self, message, color):
-        """Renderizar uma mensagem temporária na tela"""
-        message_surface = self.medium_font.render(message, True, color)
-        message_rect = message_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 50))
-        
-        # Fundo semi-transparente
-        padding = 10
-        bg_rect = pygame.Rect(message_rect.x - padding, message_rect.y - padding, 
-                            message_rect.width + padding * 2, message_rect.height + padding * 2)
-        bg_surface = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
-        bg_surface.fill((0, 0, 0, 150))
-        self.screen.blit(bg_surface, bg_rect)
-        
-        # Desenhar borda
-        pygame.draw.rect(self.screen, color, bg_rect, 2, border_radius=5)
-        
-        # Desenhar mensagem
-        self.screen.blit(message_surface, message_rect)
-
-    def render_join_room(self):
-        """Renderizar a tela para juntar-se a uma sala específica usando o ID"""
-        # Background com gradiente
-        self.screen.fill((0, 40, 0))  # Verde escuro base
-        
-        # Área do título
-        title_bg = pygame.Rect(0, 0, SCREEN_WIDTH, 120)
-        pygame.draw.rect(self.screen, (0, 30, 0), title_bg)
-        
-        # Título
-        title = self.title_font.render("Juntar-se a uma Sala", True, (240, 240, 240))
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 60))
-        self.screen.blit(title, title_rect)
-        
-        # Área central
-        form_width = 500
-        form_height = 300 # Altura original para caber senha e modo
-        form_x = SCREEN_WIDTH // 2 - form_width // 2
-        form_y = 150
-        
-        form_bg = pygame.Rect(form_x, form_y, form_width, form_height)
-        pygame.draw.rect(self.screen, (0, 60, 0), form_bg, border_radius=10)
-        pygame.draw.rect(self.screen, (0, 100, 0), form_bg, 2, border_radius=10)
-        
-        y_offset = form_y + 30
-        
-        # ID da Sala (agora Código da Sala)
-        id_label = self.medium_font.render("Código da Sala:", True, WHITE) # Texto modificado
-        self.screen.blit(id_label, (form_x + 30, y_offset))
-        
-        # Campo de entrada para o ID/Código da sala
-        id_box = pygame.Rect(form_x + 30, y_offset + 40, 440, 40)
-        
-        # Cor da borda baseada no estado de foco
-        if self.room_id_input_active:
-            id_border_color = (100, 200, 255)  # Azul quando ativo
-        else:
-            id_border_color = (0, 100, 0)  # Verde escuro padrão
-        
-        pygame.draw.rect(self.screen, (0, 80, 0), id_box, border_radius=5) # Fundo interno do campo
-        pygame.draw.rect(self.screen, id_border_color, id_box, 2, border_radius=5) # Borda
-        
-        # Texto do ID da sala
-        cursor = "|" if self.room_id_input_active and pygame.time.get_ticks() % 1000 < 500 else ""
-        id_text = self.medium_font.render(self.room_id_input + cursor, True, WHITE)
-        self.screen.blit(id_text, (id_box.x + 10, id_box.y + 5))
-        
-        y_offset += 100
-        
-        # Senha
-        password_label = self.medium_font.render("Senha da Sala:", True, WHITE)
-        self.screen.blit(password_label, (form_x + 30, y_offset))
-        
-        # Campo de entrada para a senha
-        password_box = pygame.Rect(form_x + 30, y_offset + 40, 440, 40)
-        
-        # Cor da borda baseada no estado de foco
-        if self.password_input_active:
-            password_border_color = (100, 200, 255)  # Azul quando ativo
-        else:
-            password_border_color = (0, 100, 0)  # Verde escuro padrão
-        
-        pygame.draw.rect(self.screen, (0, 80, 0), password_box, border_radius=5) # Fundo interno
-        pygame.draw.rect(self.screen, password_border_color, password_box, 2, border_radius=5) # Borda
-        
-        # Texto da senha (mostrado como asteriscos)
-        password_display = "*" * len(self.password_input)
-        cursor = "|" if self.password_input_active and pygame.time.get_ticks() % 1000 < 500 else ""
-        password_text = self.medium_font.render(password_display + cursor, True, WHITE)
-        self.screen.blit(password_text, (password_box.x + 10, password_box.y + 5))
-        
-        password_info = self.small_font.render("Deixe em branco para salas sem senha", True, (200, 200, 200))
-        self.screen.blit(password_info, (form_x + 30, y_offset + 90))
-        
-        y_offset += 120
-        
-        # Seleção de modo de conexão
-        # Removido temporariamente para simplificar, restaurar se necessário
-        # mode_label = self.medium_font.render("Modo de Conexão:", True, WHITE)
-        # self.screen.blit(mode_label, (form_x + 30, y_offset))
-        # ... (código dos botões de modo) ...
-        
-        # Botões de ação (Ajustar Y se modo for removido)
-        button_width = 200
-        button_height = 50
-        button_y = 500 # Posição original
-        
-        # Botão Buscar Salas (Restaurado)
-        mouse_pos = pygame.mouse.get_pos()
-        browse_button = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
-        browse_color = (0, 130, 180) if browse_button.collidepoint(mouse_pos) else (0, 100, 150)
-        pygame.draw.rect(self.screen, browse_color, browse_button, border_radius=10)
-        pygame.draw.rect(self.screen, WHITE, browse_button, 2, border_radius=10)
-        browse_text = self.medium_font.render("Lista de Salas", True, WHITE)
-        browse_text_rect = browse_text.get_rect(center=browse_button.center)
-        self.screen.blit(browse_text, browse_text_rect)
-
-        # Botão Entrar
-        join_button = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
-        join_color = (0, 150, 0) if join_button.collidepoint(mouse_pos) else (0, 120, 0)
-        pygame.draw.rect(self.screen, join_color, join_button, border_radius=10)
-        pygame.draw.rect(self.screen, WHITE, join_button, 2, border_radius=10)
-        join_text = self.medium_font.render("Entrar", True, WHITE)
-        join_text_rect = join_text.get_rect(center=join_button.center)
-        self.screen.blit(join_text, join_text_rect)
-        
-        # Botão Cancelar
-        cancel_button = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
-        cancel_color = (150, 0, 0) if cancel_button.collidepoint(mouse_pos) else (120, 0, 0)
-        pygame.draw.rect(self.screen, cancel_color, cancel_button, border_radius=10)
-        pygame.draw.rect(self.screen, WHITE, cancel_button, 2, border_radius=10)
-        cancel_text = self.medium_font.render("Cancelar", True, WHITE)
-        cancel_text_rect = cancel_text.get_rect(center=cancel_button.center)
-        self.screen.blit(cancel_text, cancel_text_rect)
-    
-        # Exibir mensagens de erro/sucesso
-        self.display_messages()
-
-    def handle_room_browser_event(self, event):
-        """Lidar com eventos na tela do navegador de salas"""
-        list_item_height = 50 # Ajustar para corresponder à renderização
-        list_height = 400 # Ajustar para corresponder à renderização
-        visible_items = 6 # Ajustar para corresponder à renderização
-        list_x = SCREEN_WIDTH // 2 - 400 # Ajustar para corresponder à renderização
-        list_width = 800 # Ajustar para corresponder à renderização
-        list_y = 150 # Y inicial da área da lista
-        header_y = list_y + 20 # Y onde os cabeçalhos são desenhados
-
-        # Coordenadas dos botões baseadas em render_room_browser
-        button_width = 200
-        button_height = 50
-        button_y = 650
-        refresh_button_rect = pygame.Rect(SCREEN_WIDTH - 160, 60, 120, 40)
-        create_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
-        join_id_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
-        back_button_rect = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
-        mode_y = 150 + list_height + 20 # list_y + list_height + 20
-        online_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 220, mode_y, 200, 40)
-        local_button_rect = pygame.Rect(SCREEN_WIDTH // 2 + 20, mode_y, 200, 40)
-        scroll_up_button = pygame.Rect(list_x + list_width - 40, 150 + 20, 30, 30) # list_y + 20
-        scroll_down_button = pygame.Rect(list_x + list_width - 40, 150 + list_height - 50, 30, 30) # list_y + list_height - 50
-
+    def handle_confirm_leave_game_event(self, event):
+        """Lida com eventos na tela de confirmação para sair do jogo."""
         if event.type == pygame.MOUSEBUTTONDOWN:
             mouse_pos = event.pos
             
-            # Botão Voltar
-            if back_button_rect.collidepoint(mouse_pos):
-                self.current_view = "menu"
-                # Não desconectar WebSocket aqui, talvez voltar para menu principal?
-                # if self.websocket_client:
-                #     self.websocket_client.close()
-                #     self.websocket_client = None
-                #     self.server_status = "Disconnected"
-                return
-
-            # Botão Criar Sala
-            if create_button_rect.collidepoint(mouse_pos):
-                # CORREÇÃO: Enviar comando CREATE_ROOM em vez de ir para tela inexistente
-                if self.websocket_client and self.websocket_client.is_connected():
-                    print("Solicitando criação de sala ao servidor...")
-                    # Usar valores padrão ou pegar de uma UI futura?
-                    # Por enquanto, cria sala padrão.
-                    payload = { 
-                        "roomName": f"Sala de {self.player_name}", # Nome padrão 
-                        "password": None, # Sem senha por padrão
-                        "maxPlayers": self.max_players 
-                    }
-                    if self.send_websocket_message("CREATE_ROOM", payload):
-                        self.success_message = "Enviando pedido para criar sala..."
-                        self.message_timer = pygame.time.get_ticks()
-                    else:
-                        self.error_message = "Falha ao enviar pedido para criar sala."
-                        self.message_timer = pygame.time.get_ticks()
-                else:
-                    self.error_message = "Não conectado ao servidor."
-                    self.message_timer = pygame.time.get_ticks()
-                    self.connect_websocket() # Tentar conectar se não estiver
-                return
-
-            # Botão Entrar com ID/Código
-            if join_id_button_rect.collidepoint(mouse_pos):
-                self.current_view = "join_room"
-                self.room_id_input = ""
-                self.password_input = ""
-                self.room_id_input_active = False
-                self.password_input_active = False
-                return
-
-            # Botão Atualizar Lista
-            if refresh_button_rect.collidepoint(mouse_pos):
-                self.load_room_list(mode=self.connection_mode)
-                return
-            
-            # Botões de modo
-            if online_button_rect.collidepoint(mouse_pos):
-                if self.connection_mode != "online":
-                    self.connection_mode = "online"
-                    self.connect_websocket() # Tenta conectar/reconectar se mudar para online
-                    self.load_room_list(mode="online")
-                return
-            if local_button_rect.collidepoint(mouse_pos):
-                 if self.connection_mode != "local":
-                    self.connection_mode = "local"
-                    if self.websocket_client:
-                         self.websocket_client.close()
-                         self.websocket_client = None
-                    self.load_room_list(mode="local") # Busca local
-                 return
-
-            # Selecionar sala da lista ou clicar no botão "Entrar" da linha
-            if list_x < mouse_pos[0] < list_x + list_width and 150 + 60 < mouse_pos[1] < 150 + list_height:
-                for i in range(visible_items):
-                    item_index = self.room_browser_scroll + i
-                    if item_index < len(self.room_list):
-                        # CORREÇÃO: Calcular item_y e rects como em render_room_browser
-                        # item_y agora representa a linha base do texto no item
-                        item_y = header_y + 60 + (i * list_item_height) # Usar list_item_height
-                        # Rect para detectar clique na linha (excluindo o botão)
-                        item_rect = pygame.Rect(list_x + 10, item_y - 5, list_width - 100, list_item_height) # Aproximado
-                        # Rect EXATO para o botão "Entrar"
-                        join_button_line_rect = pygame.Rect(list_x + 720, item_y - 5, 60, 30)
-
-                        # Verificar clique no botão "Entrar" da linha PRIMEIRO
-                        if join_button_line_rect.collidepoint(mouse_pos):
-                            self.join_selected_room(item_index) # Chama função para entrar
-                            return
-                        # Verificar clique na linha (para seleção), se não foi no botão
-                        elif item_rect.collidepoint(mouse_pos):
-                            self.selected_room_index = item_index
-                            print(f"Sala selecionada: {self.room_list[item_index]['name']}")
-                            return
-
-            # Botões de Scroll
-            if len(self.room_list) > visible_items:
-                 if scroll_up_button.collidepoint(mouse_pos):
-                     self.room_browser_scroll = max(0, self.room_browser_scroll - 1)
-                     return
-                 if scroll_down_button.collidepoint(mouse_pos):
-                     max_scroll = max(0, len(self.room_list) - visible_items)
-                     self.room_browser_scroll = min(max_scroll, self.room_browser_scroll + 1)
-                     return
-
-        # Scroll da lista com roda do mouse
-        elif event.type == pygame.MOUSEWHEEL:
-            if len(self.room_list) > visible_items:
-                max_scroll = max(0, len(self.room_list) - visible_items)
-                self.room_browser_scroll -= event.y
-                self.room_browser_scroll = max(0, min(self.room_browser_scroll, max_scroll))
-
-    def load_room_list(self, mode="online"):
-        """Carregar a lista de salas disponíveis via WebSocket."""
-        if mode == "online":
-            if self.websocket_client and self.websocket_client.is_connected():
-                print("Solicitando lista de salas via WebSocket...")
-                self.send_websocket_message("LIST_ROOMS")
-            else:
-                self.error_message = "Não conectado para listar salas."
-                self.message_timer = pygame.time.get_ticks()
-                # CORRIGIR INDENTAÇÃO: Deve estar dentro do else
-                self.connect_websocket() # Tenta conectar
-        else:
-            self.error_message = "Busca local não implementada."
-            self.message_timer = pygame.time.get_ticks()
-
-    def join_selected_room(self, index):
-        """Tenta entrar na sala selecionada na lista."""
-        if index < 0 or index >= len(self.room_list):
-            return
-        
-        room = self.room_list[index]
-        print(f"Tentando entrar na sala selecionada: {room['name']} (ID: {room['id']})")
-        
-        # Se a sala tiver senha, ir para a tela de join com ID preenchido
-        if room.get("hasPassword", False):
-            self.room_id_input = room["id"]
-            self.password_input = ""
-            self.password_input_active = True # Focar na senha
-            self.room_id_input_active = False
-            self.current_view = "join_room"
-            return
-        
-        # Se não tem senha, entrar diretamente
-        # Criar o jogador (se necessário)
-        if not self.player:
-            # CORRIGIR INDENTAÇÃO: Adicionar indentação
-            self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
-        
-        # Conectar à sala (chama connect_to_online_room ou connect_to_local_room)
-        success = False
-        if self.connection_mode == "online":
-            success = self.connect_to_online_room(room["id"], None) # Sem senha
-        else:
-            success = self.connect_to_local_room(room["id"], None) # Sem senha
-        
-        if success:
-             # A mudança de view ocorrerá na resposta do servidor (JOIN_SUCCESS)
-            self.success_message = "Tentando conectar à sala..."
-            self.message_timer = pygame.time.get_ticks()
-        else:
-            self.error_message = self.error_message or "Não foi possível enviar pedido para entrar na sala."
-            self.message_timer = pygame.time.get_ticks()
-
-    def connect_to_online_room(self, room_id, password=None):
-        """Envia comando para entrar em sala online via WebSocket."""
-        if not self.websocket_client or not self.websocket_client.is_connected():
-            self.error_message = "Não conectado ao servidor WebSocket."
-            self.message_timer = pygame.time.get_ticks()
-            # CORRIGIR INDENTAÇÃO: Alinhar com as linhas acima
-            self.connect_websocket() # Tentar reconectar
-            return False
-
-        # Enviar comando JSON (usa None para senha se vazia ou nula)
-        payload = {"roomId": room_id, "password": password if password else None}
-        if self.send_websocket_message("JOIN_ROOM", payload):
-            self.success_message = "Solicitação para entrar na sala enviada..."
-            self.message_timer = pygame.time.get_ticks()
-            return True # Comando enviado, aguardar resposta
-        else:
-            self.error_message = "Falha ao enviar solicitação para entrar na sala."
-            self.message_timer = pygame.time.get_ticks()
-            return False
-
-    def connect_to_local_room(self, room_id, password=None):
-        """Conectar a uma sala na rede local usando o ID da sala"""
-        # Verificar se o ID da sala foi informado
-        if not room_id:
-            self.error_message = "ID da sala não informado"
-            self.message_timer = pygame.time.get_ticks()
-            return False
-        
-        # Obter informações da sala localmente via broadcast UDP
-        success, room_info = self.matchmaking_service.get_local_room_info(room_id)
-        if not success:
-            self.error_message = "Sala não encontrada na rede local"
-            self.message_timer = pygame.time.get_ticks()
-            return False
-        
-        # Verificar senha se necessário
-        if room_info.get("hasPassword", False) and room_info.get("password") != password:
-            self.error_message = "Senha incorreta"
-            self.message_timer = pygame.time.get_ticks()
-            return False
-        
-        # Obter endereço do host
-        host_address = room_info.get("host_address")
-        if not host_address:
-            self.error_message = "Endereço do host não disponível"
-            self.message_timer = pygame.time.get_ticks()
-            return False
-        
-        # Configurar conexão P2P como cliente (se não existir)
-        if not self.p2p_manager:
-            self.p2p_manager = P2PManager(host=False, local_network=True)
-        self.p2p_manager.register_message_callback(self.on_message_received)
-        self.p2p_manager.register_connection_callback(self.on_player_connected)
-        self.p2p_manager.register_disconnection_callback(self.on_player_disconnected)
-        self.p2p_manager.start()
-    
-        # Conectar ao host
-        connect_success, connection_message = self.p2p_manager.connect_to_host(host_address)
-        if not connect_success:
-            self.error_message = f"Erro ao conectar ao host: {connection_message}"
-            self.message_timer = pygame.time.get_ticks()
-            self.p2p_manager.stop() # Parar P2P se falhar
-            self.p2p_manager = None
-            return False
-        
-        # Enviar solicitação para entrar na sala
-        # Criar jogador se não existir
-        if not self.player:
-             self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
-
-        join_message = Message.create_join_request(
-            self.player.player_id,
-            self.player.name,
-            password=password
-        )
-        self.p2p_manager.send_message(join_message)
-        
-        # Registrar entrada no jogo local (opcional)
-        # self.matchmaking_service.join_local_game(room_id, self.player_name)
-        
-        # Aguardar resposta do host (será tratada em on_message_received)
-        self.room_id = room_id
-        return True
-
-    def handle_join_room_event(self, event):
-        """Manipular eventos na tela de juntar-se a uma sala"""
-        if event.type == pygame.MOUSEBUTTONDOWN:
-            # CORRIGIR INDENTAÇÃO: Todo este bloco precisa ser indentado
-            mouse_pos = pygame.mouse.get_pos()
-            form_x = SCREEN_WIDTH // 2 - 250
-            form_y = 150
-        
-            # Ativar/desativar campos de entrada
-            # Campo ID da Sala
-            id_box = pygame.Rect(form_x + 30, form_y + 70, 440, 40)
-            if id_box.collidepoint(mouse_pos):
-                self.room_id_input_active = True
-                self.password_input_active = False
-            
-            # Campo Senha
-            password_box = pygame.Rect(form_x + 30, form_y + 170, 440, 40)
-            if password_box.collidepoint(mouse_pos):
-                self.password_input_active = True
-                self.room_id_input_active = False
-            
-            # Botões de modo de conexão (Restaurar se a lógica for usada)
-            # ... (código comentado) ...
-            
-            # Botão Buscar Salas
-            button_width = 200
+            # Definir retângulos dos botões (devem corresponder a render_confirm_leave_game)
+            popup_width = 400
+            popup_height = 200
+            popup_x = SCREEN_WIDTH // 2 - popup_width // 2
+            popup_y = SCREEN_HEIGHT // 2 - popup_height // 2
+            button_width = 150
             button_height = 50
-            button_y = 500
-            browse_button = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
-            if browse_button.collidepoint(mouse_pos):
-                self.current_view = "room_browser"
-                # self.connection_mode = self.connection_mode_selection # Usar modo padrão ou o que já estava
-                self.load_room_list(mode=self.connection_mode)
-                return
+            button_y = popup_y + popup_height - 70
             
-            # Botão Entrar
-            join_button = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
-            if join_button.collidepoint(mouse_pos):
-                self.join_room_by_id()
-                return
-            
-            # Botão Cancelar
-            cancel_button = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
-            if cancel_button.collidepoint(mouse_pos):
-                self.current_view = "menu"
-                return
+            yes_button_rect = pygame.Rect(popup_x + 30, button_y, button_width, button_height)
+            no_button_rect = pygame.Rect(popup_x + popup_width - button_width - 30, button_y, button_width, button_height)
+
+            # Verificar clique no botão "Sim, Sair"
+            if yes_button_rect.collidepoint(mouse_pos):
+                print("Confirmado: Sair da partida.")
+                # Enviar comando LEAVE_ROOM se estiver online
+                if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
+                    self.send_websocket_message("LEAVE_ROOM", {"roomId": self.room_id})
                 
-        # CORRIGIR INDENTAÇÃO: Alinhar com o if event.type == MOUSEBUTTONDOWN
-        elif event.type == pygame.KEYDOWN:
-            # CORRIGIR INDENTAÇÃO: Indentar sob o elif
-            if self.room_id_input_active:
-                if event.key == pygame.K_BACKSPACE:
-                    self.room_id_input = self.room_id_input[:-1]
-                elif event.key == pygame.K_RETURN:
-                    self.room_id_input_active = False
-                elif len(self.room_id_input) < 8:  # Limitar tamanho do ID
-                    # Permitir letras e números (original era só digit, ajustado)
-                    if event.unicode.isalnum(): 
-                        self.room_id_input += event.unicode
-            elif self.password_input_active:
-                if event.key == pygame.K_BACKSPACE:
-                    self.password_input = self.password_input[:-1]
-                elif event.key == pygame.K_RETURN:
-                    self.password_input_active = False
-                elif len(self.password_input) < 20:  # Limitar tamanho da senha
-                    if event.unicode.isprintable():
-                        self.password_input += event.unicode
-
-    def join_room_by_id(self):
-        """Entrar na sala usando o ID digitado"""
-        if not self.room_id_input:
-            self.error_message = "Digite o ID da sala"
-            self.message_timer = pygame.time.get_ticks()
-            return
-        
-        # Criar o jogador (se necessário)
-        if not self.player:
-             self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
-        
-        # Conectar à sala baseado no modo selecionado (ou padrão se removido)
-        # Usar self.connection_mode (do browser) ou self.connection_mode_selection (local da tela)?
-        # Assumindo que se está nesta tela vindo do menu, o modo online é o padrão
-        # A lógica original usava connection_mode_selection que só era setado ao clicar nos botões (removidos)
-        # Vamos assumir online por padrão aqui.
-        mode_to_use = "online" # Simplificado. A lógica de seleção de modo foi removida da UI.
-
-        success = False
-        if mode_to_use == "online":
-            success = self.connect_to_online_room(self.room_id_input, self.password_input or None)
-        else: # modo local (atualmente não alcançável por esta função como está)
-            success = self.connect_to_local_room(self.room_id_input, self.password_input or None)
-        
-        if success:
-            # Mudança de view deve ocorrer na resposta JOIN_SUCCESS
-            self.success_message = "Tentando entrar na sala..."
-            self.message_timer = pygame.time.get_ticks()
-        else:
-            # Mensagem de erro será definida pelas funções de conexão
-            # Garantir que haja uma mensagem de erro se a conexão falhar
-            self.error_message = self.error_message or "Falha ao tentar entrar na sala."
-            self.message_timer = pygame.time.get_ticks()
-
-    def update_lobby_view(self, players_list=None, add_player=None, remove_player_id=None):
-        """Atualiza a representação interna dos jogadores no lobby."""
-        # Esta função precisa ser criada ou adaptada para atualizar a UI
-        # baseada nas informações recebidas (players_list, add_player, remove_player_id)
-        print(f"Atualizando Lobby View: List={players_list}, Add={add_player}, Remove={remove_player_id}")
-        # Exemplo: self.lobby_players = ...
-        pass # Implementar lógica de UI do lobby
+                # Limpar estado local e voltar ao menu
+                self.game = None # Limpa jogo single player
+                self.game_state = None
+                self.room_id = ""
+                self.lobby_players = []
+                self.host_mode = False
+                self.current_view = "menu"
+                self.success_message = "Você saiu da partida."
+                self.message_timer = pygame.time.get_ticks()
+                return
+            
+            # Verificar clique no botão "Não, Voltar"
+            if no_button_rect.collidepoint(mouse_pos):
+                print("Cancelado: Voltar ao jogo.")
+                self.current_view = "game"
+                return
+            
+            # Se clicar fora do popup, considerar como cancelar? (Opcional)
+            # popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
+            # if not popup_rect.collidepoint(mouse_pos):
+            #     self.current_view = "game"
+            #     return
 
     def connect_websocket(self):
         """Inicia a conexão WebSocket."""
@@ -2810,16 +1836,38 @@ class BlackjackClient:
             print("Tentativa de conectar WebSocket, mas já conectado.")
             return
 
-        print("Tentando conectar ao servidor WebSocket...")
+        print(f"[DEBUG] Tentando conectar ao servidor WebSocket em {self.server_address}...")
         self.server_status = "Connecting..."
+        
+        # Verificar se o endereço do servidor é válido
+        if ":" not in self.server_address:
+            print(f"[DEBUG] Endereço inválido (sem porta): {self.server_address}")
+            self.server_address = "localhost:8080"  # Usar valor padrão
+            print(f"[DEBUG] Usando endereço padrão: {self.server_address}")
+        
+        # Separar host e porta para verificação
+        host, port_str = self.server_address.split(":")
+        try:
+            port = int(port_str)
+            print(f"[DEBUG] Usando host: {host}, porta: {port}")
+        except ValueError:
+            print(f"[DEBUG] Porta inválida: {port_str}")
+            self.server_address = "localhost:8080"  # Usar valor padrão
+            host, port_str = "localhost", "8080"
+            port = 8080
+            print(f"[DEBUG] Usando valores padrão: {host}:{port}")
+            
         # Formar URL ws:// ou wss://
         ws_schema = "ws://" # Mudar para wss:// se o servidor usar SSL
         ws_url = f"{ws_schema}{self.server_address}/ws"
+        print(f"[DEBUG] URL WebSocket completa: {ws_url}")
 
-        # Instanciar e conectar (a classe WebSocketClient será criada depois)
-        # A conexão real e o loop de recebimento ocorrerão em background (thread/asyncio)
+        # Instanciar e conectar WebSocketClient
+        self._message_queue = queue.Queue()  # Criar fila de mensagens
         self.websocket_client = WebSocketClient(ws_url, self.on_websocket_status, self._message_queue)
-        self.websocket_client.connect() # Método connect inicia a thread/loop
+        print("[DEBUG] WebSocketClient criado, iniciando conexão...")
+        self.websocket_client.connect() # Inicia a thread/loop
+        print("[DEBUG] Método connect() chamado, aguardando callback de status...")
 
     def on_websocket_status(self, status):
         """Callback chamado pelo WebSocketClient para atualizar o status."""
@@ -2828,11 +1876,11 @@ class BlackjackClient:
         if status == "Disconnected":
             self.handle_server_disconnect() # Chama handler de desconexão
         elif status == "Connected":
-             # Enviar nome após conectar
-             self.send_websocket_message("SET_NAME", {"name": self.player_name})
-             # Mudar para browser após conectar com sucesso?
-             self.current_view = "room_browser"
-             self.send_websocket_message("LIST_ROOMS") # Pede lista inicial
+            # Enviar nome após conectar
+            self.send_websocket_message("SET_NAME", {"name": self.player_name})
+            # Mudar para browser após conectar com sucesso
+            self.current_view = "room_browser"
+            self.send_websocket_message("LIST_ROOMS") # Pede lista inicial
 
     def send_websocket_message(self, msg_type, payload=None):
         """Envia uma mensagem JSON formatada pelo WebSocket."""
@@ -2841,15 +1889,13 @@ class BlackjackClient:
             if payload is not None:
                 message["payload"] = payload
             print(f"Enviando WebSocket: {message}")
-            return self.websocket_client.send(message) # Método send na classe client
+            return self.websocket_client.send(message) # Método send na classe WebSocketClient
         else:
             print(f"Erro: Não conectado ao WebSocket para enviar {msg_type}")
             self.error_message = "Desconectado. Tente conectar novamente."
             self.message_timer = pygame.time.get_ticks()
-            # Tentar reconectar?
-            # self.connect_websocket()
             return False
-    
+
     def render_room_browser(self):
         """Renderizar a tela de navegação de salas disponíveis"""
         # Background com gradiente
@@ -2910,7 +1956,7 @@ class BlackjackClient:
             self.screen.blit(no_rooms_text, no_rooms_rect)
         else:
             # Lista de salas
-            item_height = 50 # Renomear de list_item_height para consistência?
+            item_height = 50
             visible_items = 6  # Número de itens visíveis na tela
             start_index = self.room_browser_scroll
             end_index = min(start_index + visible_items, len(self.room_list))
@@ -2932,11 +1978,11 @@ class BlackjackClient:
                 name_text = self.medium_font.render(room["name"], True, WHITE)
                 self.screen.blit(name_text, (list_x + 150, item_y))
                 
-                # Número de jogadores (Corrigido para playerCount)
-                players_text = self.medium_font.render(f"{room['playerCount']}/8", True, WHITE)
+                # Número de jogadores
+                players_text = self.medium_font.render(f"{room['playerCount']}/4", True, WHITE)
                 self.screen.blit(players_text, (list_x + 470, item_y))
                 
-                # Indicação se tem senha (Corrigido para hasPassword)
+                # Indicação se tem senha
                 has_password = room.get("hasPassword", False)
                 password_text = self.medium_font.render("Sim" if has_password else "Não", True, 
                                                        (255, 150, 150) if has_password else (150, 255, 150))
@@ -3021,8 +2067,386 @@ class BlackjackClient:
         back_text = self.medium_font.render("Voltar", True, WHITE)
         back_text_rect = back_text.get_rect(center=back_button.center)
         self.screen.blit(back_text, back_text_rect)
-    
-    # <<<< INÍCIO CÓDIGO RESTAURADO display_messages >>>>
+
+    def handle_room_browser_event(self, event):
+        """Lidar com eventos na tela do navegador de salas"""
+        list_item_height = 50
+        list_height = 400
+        visible_items = 6
+        list_x = SCREEN_WIDTH // 2 - 400
+        list_width = 800
+        list_y = 150
+        header_y = list_y + 20
+
+        # Coordenadas dos botões baseadas em render_room_browser
+        button_width = 200
+        button_height = 50
+        button_y = 650
+        refresh_button_rect = pygame.Rect(SCREEN_WIDTH - 160, 60, 120, 40)
+        create_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
+        join_id_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
+        back_button_rect = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
+        mode_y = 150 + list_height + 20
+        online_button_rect = pygame.Rect(SCREEN_WIDTH // 2 - 220, mode_y, 200, 40)
+        local_button_rect = pygame.Rect(SCREEN_WIDTH // 2 + 20, mode_y, 200, 40)
+        scroll_up_button = pygame.Rect(list_x + list_width - 40, 150 + 20, 30, 30)
+        scroll_down_button = pygame.Rect(list_x + list_width - 40, 150 + list_height - 50, 30, 30)
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_pos = event.pos
+            
+            # Botão Voltar
+            if back_button_rect.collidepoint(mouse_pos):
+                self.current_view = "menu"
+                return
+
+            # Botão Criar Sala
+            if create_button_rect.collidepoint(mouse_pos):
+                if self.websocket_client and self.websocket_client.is_connected():
+                    print("Solicitando criação de sala ao servidor...")
+                    payload = { 
+                        "roomName": f"Sala de {self.player_name}", 
+                        "password": None,
+                        "maxPlayers": self.max_players 
+                    }
+                    if self.send_websocket_message("CREATE_ROOM", payload):
+                        self.success_message = "Enviando pedido para criar sala..."
+                        self.message_timer = pygame.time.get_ticks()
+                    else:
+                        self.error_message = "Falha ao enviar pedido para criar sala."
+                        self.message_timer = pygame.time.get_ticks()
+                else:
+                    self.error_message = "Não conectado ao servidor."
+                    self.message_timer = pygame.time.get_ticks()
+                    self.connect_websocket()
+                return
+
+            # Botão Entrar com ID/Código
+            if join_id_button_rect.collidepoint(mouse_pos):
+                self.current_view = "join_room"
+                self.room_id_input = ""
+                self.password_input = ""
+                self.room_id_input_active = True
+                self.password_input_active = False
+                return
+
+            # Botão Atualizar Lista
+            if refresh_button_rect.collidepoint(mouse_pos):
+                self.load_room_list(mode=self.connection_mode)
+                return
+            
+            # Botões de modo
+            if online_button_rect.collidepoint(mouse_pos):
+                if self.connection_mode != "online":
+                    self.connection_mode = "online"
+                    self.connect_websocket()
+                    self.load_room_list(mode="online")
+                return
+            if local_button_rect.collidepoint(mouse_pos):
+                if self.connection_mode != "local":
+                    self.connection_mode = "local"
+                    if self.websocket_client:
+                        self.websocket_client.close()
+                        self.websocket_client = None
+                    self.load_room_list(mode="local")
+                return
+
+            # Selecionar sala da lista ou clicar no botão "Entrar" da linha
+            if list_x < mouse_pos[0] < list_x + list_width and 150 + 60 < mouse_pos[1] < 150 + list_height:
+                for i in range(visible_items):
+                    item_index = self.room_browser_scroll + i
+                    if item_index < len(self.room_list):
+                        item_y = header_y + 60 + (i * list_item_height)
+                        item_rect = pygame.Rect(list_x + 10, item_y - 5, list_width - 100, list_item_height)
+                        join_button_line_rect = pygame.Rect(list_x + 720, item_y - 5, 60, 30)
+
+                        # Verificar clique no botão "Entrar" da linha
+                        if join_button_line_rect.collidepoint(mouse_pos):
+                            self.join_selected_room(item_index)
+                            return
+                        # Verificar clique na linha (para seleção)
+                        elif item_rect.collidepoint(mouse_pos):
+                            self.selected_room_index = item_index
+                            print(f"Sala selecionada: {self.room_list[item_index]['name']}")
+                            return
+
+            # Botões de Scroll
+            if len(self.room_list) > visible_items:
+                if scroll_up_button.collidepoint(mouse_pos):
+                    self.room_browser_scroll = max(0, self.room_browser_scroll - 1)
+                    return
+                if scroll_down_button.collidepoint(mouse_pos):
+                    max_scroll = max(0, len(self.room_list) - visible_items)
+                    self.room_browser_scroll = min(max_scroll, self.room_browser_scroll + 1)
+                    return
+
+        # Scroll da lista com roda do mouse
+        elif event.type == pygame.MOUSEWHEEL:
+            if len(self.room_list) > visible_items:
+                max_scroll = max(0, len(self.room_list) - visible_items)
+                self.room_browser_scroll -= event.y
+                self.room_browser_scroll = max(0, min(self.room_browser_scroll, max_scroll))
+
+    def load_room_list(self, mode="online"):
+        """Carregar a lista de salas disponíveis via WebSocket."""
+        if mode == "online":
+            if self.websocket_client and self.websocket_client.is_connected():
+                print("Solicitando lista de salas via WebSocket...")
+                self.send_websocket_message("LIST_ROOMS")
+            else:
+                self.error_message = "Não conectado para listar salas."
+                self.message_timer = pygame.time.get_ticks()
+                self.connect_websocket()
+        else:
+            self.error_message = "Busca local não implementada."
+            self.message_timer = pygame.time.get_ticks()
+
+    def join_selected_room(self, index):
+        """Tenta entrar na sala selecionada na lista."""
+        if index < 0 or index >= len(self.room_list):
+            return
+        
+        room = self.room_list[index]
+        print(f"Tentando entrar na sala selecionada: {room['name']} (ID: {room['id']})")
+        
+        # Se a sala tiver senha, ir para a tela de join com ID preenchido
+        if room.get("hasPassword", False):
+            self.room_id_input = room["id"]
+            self.password_input = ""
+            self.password_input_active = True
+            self.room_id_input_active = False
+            self.current_view = "join_room"
+            return
+        
+        # Se não tem senha, entrar diretamente
+        # Criar o jogador (se necessário)
+        if not self.player:
+            self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
+        
+        # Conectar à sala online
+        success = False
+        if self.connection_mode == "online":
+            success = self.connect_to_online_room(room["id"], None)
+        else:
+            self.error_message = "Modo de conexão local não implementado."
+            self.message_timer = pygame.time.get_ticks()
+            return
+        
+        if success:
+            self.success_message = "Tentando conectar à sala..."
+            self.message_timer = pygame.time.get_ticks()
+        else:
+            self.error_message = self.error_message or "Não foi possível enviar pedido para entrar na sala."
+            self.message_timer = pygame.time.get_ticks()
+
+    def connect_to_online_room(self, room_id, password=None):
+        """Envia comando para entrar em sala online via WebSocket."""
+        if not self.websocket_client or not self.websocket_client.is_connected():
+            self.error_message = "Não conectado ao servidor WebSocket."
+            self.message_timer = pygame.time.get_ticks()
+            self.connect_websocket()
+            return False
+
+        # Enviar comando JOIN_ROOM
+        payload = {"roomId": room_id, "password": password if password else None}
+        if self.send_websocket_message("JOIN_ROOM", payload):
+            self.success_message = "Solicitação para entrar na sala enviada..."
+            self.message_timer = pygame.time.get_ticks()
+            return True
+        else:
+            self.error_message = "Falha ao enviar solicitação para entrar na sala."
+            self.message_timer = pygame.time.get_ticks()
+            return False
+
+    def render_join_room(self):
+        """Renderizar a tela para juntar-se a uma sala específica usando o ID"""
+        # Background com gradiente
+        self.screen.fill((0, 40, 0))  # Verde escuro base
+        
+        # Área do título
+        title_bg = pygame.Rect(0, 0, SCREEN_WIDTH, 120)
+        pygame.draw.rect(self.screen, (0, 30, 0), title_bg)
+        
+        # Título
+        title = self.title_font.render("Juntar-se a uma Sala", True, (240, 240, 240))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 60))
+        self.screen.blit(title, title_rect)
+        
+        # Área central
+        form_width = 500
+        form_height = 300 # Altura para caber senha e modo
+        form_x = SCREEN_WIDTH // 2 - form_width // 2
+        form_y = 150
+        
+        form_bg = pygame.Rect(form_x, form_y, form_width, form_height)
+        pygame.draw.rect(self.screen, (0, 60, 0), form_bg, border_radius=10)
+        pygame.draw.rect(self.screen, (0, 100, 0), form_bg, 2, border_radius=10)
+        
+        y_offset = form_y + 30
+        
+        # ID da Sala (agora Código da Sala)
+        id_label = self.medium_font.render("Código da Sala:", True, WHITE)
+        self.screen.blit(id_label, (form_x + 30, y_offset))
+        
+        # Campo de entrada para o ID/Código da sala
+        id_box = pygame.Rect(form_x + 30, y_offset + 40, 440, 40)
+        
+        # Cor da borda baseada no estado de foco
+        if self.room_id_input_active:
+            id_border_color = (100, 200, 255)  # Azul quando ativo
+        else:
+            id_border_color = (0, 100, 0)  # Verde escuro padrão
+        
+        pygame.draw.rect(self.screen, (0, 80, 0), id_box, border_radius=5) # Fundo interno do campo
+        pygame.draw.rect(self.screen, id_border_color, id_box, 2, border_radius=5) # Borda
+        
+        # Texto do ID da sala
+        cursor = "|" if self.room_id_input_active and pygame.time.get_ticks() % 1000 < 500 else ""
+        id_text = self.medium_font.render(self.room_id_input + cursor, True, WHITE)
+        self.screen.blit(id_text, (id_box.x + 10, id_box.y + 5))
+        
+        y_offset += 100
+        
+        # Senha
+        password_label = self.medium_font.render("Senha da Sala:", True, WHITE)
+        self.screen.blit(password_label, (form_x + 30, y_offset))
+        
+        # Campo de entrada para a senha
+        password_box = pygame.Rect(form_x + 30, y_offset + 40, 440, 40)
+        
+        # Cor da borda baseada no estado de foco
+        if self.password_input_active:
+            password_border_color = (100, 200, 255)  # Azul quando ativo
+        else:
+            password_border_color = (0, 100, 0)  # Verde escuro padrão
+        
+        pygame.draw.rect(self.screen, (0, 80, 0), password_box, border_radius=5) # Fundo interno
+        pygame.draw.rect(self.screen, password_border_color, password_box, 2, border_radius=5) # Borda
+        
+        # Texto da senha (mostrado como asteriscos)
+        password_display = "*" * len(self.password_input)
+        cursor = "|" if self.password_input_active and pygame.time.get_ticks() % 1000 < 500 else ""
+        password_text = self.medium_font.render(password_display + cursor, True, WHITE)
+        self.screen.blit(password_text, (password_box.x + 10, password_box.y + 5))
+        
+        password_info = self.small_font.render("Deixe em branco para salas sem senha", True, (200, 200, 200))
+        self.screen.blit(password_info, (form_x + 30, y_offset + 90))
+        
+        # Botões de ação
+        button_width = 200
+        button_height = 50
+        button_y = 500
+        
+        # Botão Buscar Salas
+        mouse_pos = pygame.mouse.get_pos()
+        browse_button = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
+        browse_color = (0, 130, 180) if browse_button.collidepoint(mouse_pos) else (0, 100, 150)
+        pygame.draw.rect(self.screen, browse_color, browse_button, border_radius=10)
+        pygame.draw.rect(self.screen, WHITE, browse_button, 2, border_radius=10)
+        browse_text = self.medium_font.render("Lista de Salas", True, WHITE)
+        browse_text_rect = browse_text.get_rect(center=browse_button.center)
+        self.screen.blit(browse_text, browse_text_rect)
+
+        # Botão Entrar
+        join_button = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
+        join_color = (0, 150, 0) if join_button.collidepoint(mouse_pos) else (0, 120, 0)
+        pygame.draw.rect(self.screen, join_color, join_button, border_radius=10)
+        pygame.draw.rect(self.screen, WHITE, join_button, 2, border_radius=10)
+        join_text = self.medium_font.render("Entrar", True, WHITE)
+        join_text_rect = join_text.get_rect(center=join_button.center)
+        self.screen.blit(join_text, join_text_rect)
+        
+        # Botão Cancelar
+        cancel_button = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
+        cancel_color = (150, 0, 0) if cancel_button.collidepoint(mouse_pos) else (120, 0, 0)
+        pygame.draw.rect(self.screen, cancel_color, cancel_button, border_radius=10)
+        pygame.draw.rect(self.screen, WHITE, cancel_button, 2, border_radius=10)
+        cancel_text = self.medium_font.render("Cancelar", True, WHITE)
+        cancel_text_rect = cancel_text.get_rect(center=cancel_button.center)
+        self.screen.blit(cancel_text, cancel_text_rect)
+
+    def handle_join_room_event(self, event):
+        """Manipular eventos na tela de juntar-se a uma sala"""
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            mouse_pos = event.pos
+            form_x = SCREEN_WIDTH // 2 - 250
+            form_y = 150
+            
+            # Ativar/desativar campos de entrada
+            # Campo ID da Sala
+            id_box = pygame.Rect(form_x + 30, form_y + 70, 440, 40)
+            if id_box.collidepoint(mouse_pos):
+                self.room_id_input_active = True
+                self.password_input_active = False
+            
+            # Campo Senha
+            password_box = pygame.Rect(form_x + 30, form_y + 170, 440, 40)
+            if password_box.collidepoint(mouse_pos):
+                self.password_input_active = True
+                self.room_id_input_active = False
+            
+            # Botão Buscar Salas
+            button_width = 200
+            button_height = 50
+            button_y = 500
+            browse_button = pygame.Rect(SCREEN_WIDTH // 2 - 310, button_y, button_width, button_height)
+            if browse_button.collidepoint(mouse_pos):
+                self.current_view = "room_browser"
+                self.load_room_list(mode=self.connection_mode)
+                return
+            
+            # Botão Entrar
+            join_button = pygame.Rect(SCREEN_WIDTH // 2 - 100, button_y, button_width, button_height)
+            if join_button.collidepoint(mouse_pos):
+                self.join_room_by_id()
+                return
+            
+            # Botão Cancelar
+            cancel_button = pygame.Rect(SCREEN_WIDTH // 2 + 110, button_y, button_width, button_height)
+            if cancel_button.collidepoint(mouse_pos):
+                self.current_view = "menu"
+                return
+                
+        elif event.type == pygame.KEYDOWN:
+            if self.room_id_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    self.room_id_input = self.room_id_input[:-1]
+                elif event.key == pygame.K_RETURN:
+                    self.room_id_input_active = False
+                elif len(self.room_id_input) < 8:  # Limitar tamanho do ID
+                    # Permitir letras e números
+                    if event.unicode.isalnum(): 
+                        self.room_id_input += event.unicode
+            elif self.password_input_active:
+                if event.key == pygame.K_BACKSPACE:
+                    self.password_input = self.password_input[:-1]
+                elif event.key == pygame.K_RETURN:
+                    self.password_input_active = False
+                elif len(self.password_input) < 20:  # Limitar tamanho da senha
+                    if event.unicode.isprintable():
+                        self.password_input += event.unicode
+
+    def join_room_by_id(self):
+        """Entrar na sala usando o ID digitado"""
+        if not self.room_id_input:
+            self.error_message = "Digite o ID da sala"
+            self.message_timer = pygame.time.get_ticks()
+            return
+        
+        # Criar o jogador (se necessário)
+        if not self.player:
+            self.player = Player(self.player_name, self.player_balance, str(uuid.uuid4()))
+        
+        # Conectar à sala online
+        success = self.connect_to_online_room(self.room_id_input, self.password_input or None)
+        
+        if success:
+            self.success_message = "Tentando entrar na sala..."
+            self.message_timer = pygame.time.get_ticks()
+        else:
+            self.error_message = self.error_message or "Falha ao tentar entrar na sala."
+            self.message_timer = pygame.time.get_ticks()
+
     def display_messages(self):
         """Exibe mensagens temporárias de erro ou sucesso na tela."""
         current_time = pygame.time.get_ticks()
@@ -3036,132 +2460,29 @@ class BlackjackClient:
             self.render_message(self.success_message, (0, 200, 0)) # Verde para sucesso
             # Limpar a mensagem de erro
             self.error_message = ""
-        # CORRIGIR INDENTAÇÃO: Alinhar com if/elif
         else:
             # Limpar ambas as mensagens se o tempo expirou
             self.error_message = ""
             self.success_message = ""
-    # <<<< FIM CÓDIGO RESTAURADO display_messages >>>>
+            
+    def render_message(self, message, color):
+        """Renderizar uma mensagem temporária na tela"""
+        message_surface = self.medium_font.render(message, True, color)
+        message_rect = message_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 50))
+        
+        # Fundo semi-transparente
+        padding = 10
+        bg_rect = pygame.Rect(message_rect.x - padding, message_rect.y - padding, 
+                            message_rect.width + padding * 2, message_rect.height + padding * 2)
+        bg_surface = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        bg_surface.fill((0, 0, 0, 150))
+        self.screen.blit(bg_surface, bg_rect)
+        
+        # Desenhar borda
+        pygame.draw.rect(self.screen, color, bg_rect, 2, border_radius=5)
+        
+        # Desenhar mensagem
+        self.screen.blit(message_surface, message_rect)
 
-    # --- NOVO HANDLER --- #
-    def handle_confirm_leave_game_event(self, event):
-         """Lida com eventos na tela de confirmação para sair do jogo."""
-         if event.type == pygame.MOUSEBUTTONDOWN:
-             mouse_pos = event.pos
-             
-             # Definir retângulos dos botões (devem corresponder a render_confirm_leave_game)
-             popup_width = 400
-             popup_height = 200
-             popup_x = SCREEN_WIDTH // 2 - popup_width // 2
-             popup_y = SCREEN_HEIGHT // 2 - popup_height // 2
-             button_width = 150
-             button_height = 50
-             button_y = popup_y + popup_height - 70
-             
-             yes_button_rect = pygame.Rect(popup_x + 30, button_y, button_width, button_height)
-             no_button_rect = pygame.Rect(popup_x + popup_width - button_width - 30, button_y, button_width, button_height)
 
-             # Verificar clique no botão "Sim, Sair"
-             if yes_button_rect.collidepoint(mouse_pos):
-                 print("Confirmado: Sair da partida.")
-                 # Enviar comando LEAVE_ROOM se estiver online
-                 if self.websocket_client and self.websocket_client.is_connected() and self.room_id:
-                     self.send_websocket_message("LEAVE_ROOM", {"roomId": self.room_id})
-                 
-                 # Limpar estado local e voltar ao menu
-                 self.game = None # Limpa jogo single player
-                 self.game_state = None
-                 self.room_id = ""
-                 self.lobby_players = []
-                 self.host_mode = False
-                 self.current_view = "menu"
-                 self.success_message = "Você saiu da partida."
-                 self.message_timer = pygame.time.get_ticks()
-                 return
-
-             # Verificar clique no botão "Não, Voltar"
-             if no_button_rect.collidepoint(mouse_pos):
-                 print("Cancelado: Voltar ao jogo.")
-                 self.current_view = "game"
-                 return
-                 
-             # Se clicar fora do popup, considerar como cancelar? (Opcional)
-             # popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
-             # if not popup_rect.collidepoint(mouse_pos):
-             #      self.current_view = "game"
-             #      return
-
-    # --- NOVA FUNÇÃO DE RENDERIZAÇÃO --- #
-    def render_confirm_leave_game(self):
-         """Renderiza o pop-up de confirmação para sair do jogo."""
-         # Fundo escurecido
-         overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-         overlay.fill((0, 0, 0, 180)) # Preto semi-transparente
-         self.screen.blit(overlay, (0, 0))
-
-         # Janela do Pop-up
-         popup_width = 400
-         popup_height = 200
-         popup_x = SCREEN_WIDTH // 2 - popup_width // 2
-         popup_y = SCREEN_HEIGHT // 2 - popup_height // 2
-         popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
-         
-         pygame.draw.rect(self.screen, (0, 60, 0), popup_rect, border_radius=15)
-         pygame.draw.rect(self.screen, WHITE, popup_rect, 3, border_radius=15)
-
-         # Mensagem de Confirmação
-         title_font = self.medium_font
-         text_font = self.small_font
-         
-         title_text = title_font.render("Sair da Partida?", True, WHITE)
-         title_rect = title_text.get_rect(center=(popup_rect.centerx, popup_y + 40))
-         self.screen.blit(title_text, title_rect)
-
-         message_text = text_font.render("Tem certeza que deseja sair?", True, (200, 200, 200))
-         message_rect = message_text.get_rect(center=(popup_rect.centerx, popup_y + 80))
-         self.screen.blit(message_text, message_rect)
-         
-         message_text2 = text_font.render("(O progresso atual será perdido)", True, (200, 200, 200))
-         message_rect2 = message_text2.get_rect(center=(popup_rect.centerx, popup_y + 100))
-         self.screen.blit(message_text2, message_rect2)
-
-         # Botões Sim/Não
-         button_width = 150
-         button_height = 50
-         button_y = popup_y + popup_height - 70
-         mouse_pos = pygame.mouse.get_pos()
-
-         # Botão Sim
-         yes_button_rect = pygame.Rect(popup_x + 30, button_y, button_width, button_height)
-         yes_color = (180, 0, 0) if yes_button_rect.collidepoint(mouse_pos) else (140, 0, 0)
-         pygame.draw.rect(self.screen, yes_color, yes_button_rect, border_radius=10)
-         pygame.draw.rect(self.screen, WHITE, yes_button_rect, 2, border_radius=10)
-         yes_text = self.medium_font.render("Sim, Sair", True, WHITE)
-         yes_text_rect = yes_text.get_rect(center=yes_button_rect.center)
-         self.screen.blit(yes_text, yes_text_rect)
-
-         # Botão Não
-         no_button_rect = pygame.Rect(popup_x + popup_width - button_width - 30, button_y, button_width, button_height)
-         no_color = (0, 150, 0) if no_button_rect.collidepoint(mouse_pos) else (0, 120, 0)
-         pygame.draw.rect(self.screen, no_color, no_button_rect, border_radius=10)
-         pygame.draw.rect(self.screen, WHITE, no_button_rect, 2, border_radius=10)
-         no_text = self.medium_font.render("Não, Voltar", True, WHITE)
-         no_text_rect = no_text.get_rect(center=no_button_rect.center)
-         self.screen.blit(no_text, no_text_rect)
-
-if __name__ == "__main__":
-    # Verificar se o arquivo de dados do jogador existe, se não, criar com saldo inicial
-    data_file = os.path.join(os.path.dirname(__file__), 'player_data.txt')
-    if not os.path.exists(data_file):
-        try:
-            with open(data_file, 'w') as f:
-                 # Escreve um jogador padrão se o arquivo não existir
-                 default_data = {"Player": 1000} # Saldo inicial de 1000
-                 json.dump(default_data, f)
-            print(f"Arquivo {data_file} criado com jogador padrão.")
-        except Exception as e:
-             print(f"Erro ao criar arquivo de dados inicial: {e}")
-
-    client = BlackjackClient()
-    client.start()
 
