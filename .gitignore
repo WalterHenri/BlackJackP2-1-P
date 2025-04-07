@@ -1,0 +1,8 @@
+# Ignora as pastas bin e obj
+/BlackJackServer/BlackJackServer/**/bin/
+/BlackJackServer/BlackJackServer/**/obj/
+
+# Ignora o .vs
+/BlackJackServer/BlackJackServer/.vs
+/BlackJackServer/.vs
+/.vs
