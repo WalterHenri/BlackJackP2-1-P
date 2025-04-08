@@ -1,0 +1,1 @@
+# Este pacote contém os testes para o cliente Blackjack 

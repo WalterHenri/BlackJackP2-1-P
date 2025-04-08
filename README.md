@@ -1,99 +1,117 @@
-# Blackjack 21 P2P Game Architecture
+# Blackjack - Cliente em Python com Pygame
 
-## Core Components
+![Blackjack](https://img.shields.io/badge/Blackjack-Client-green)
+![Python](https://img.shields.io/badge/Python-3.x-blue)
+![Pygame](https://img.shields.io/badge/Pygame-2.x-yellow)
 
-### 1. Game Objects
-- **Card**: Represents a playing card with suit and value
-- **Deck**: Collection of 52 cards, with shuffle and draw capabilities
-- **Hand**: Collection of cards for a player or dealer, with calculation methods
-- **Player**: Represents a user with properties like name, balance, and current hand
-- **Dealer**: Special player that follows specific rules for playing
-- **Game**: Manages the game state, rules, and flow
+Um jogo de Blackjack em Python utilizando Pygame para a interface gráfica. Este cliente permite jogar Blackjack sozinho contra bots ou em modo multiplayer.
 
-### 2. Network Components
-- **Socket Manager**: Handles P2P connections between players
-- **Message Handler**: Processes and routes game messages between clients
-- **Serialization Layer**: Converts game state to transferable format
+## Recursos Principais
 
-### 3. Game Logic
-- **Rules Engine**: Implements blackjack rules (hit, stand, split, double down)
-- **Bet Manager**: Handles coin transactions and bet placement
-- **Game State Manager**: Tracks the current state of the game (waiting, dealing, player turns, etc.)
-- **Turn Manager**: Controls whose turn it is and what actions are valid
+- **Interface Gráfica Atraente**: Design visualmente agradável com elementos interativos.
+- **Modo Solo com Bots**: Jogue contra 1-3 bots com comportamento adaptado.
+- **Controles Intuitivos**: Apostas, Hit, Stand e outras ações de jogo.
+- **Efeitos Visuais**: Animações, sombras e efeitos de hover para melhor experiência.
 
-### 4. Data Management
-- **Player Profile Store**: Stores player information and coin balances
-- **Game History**: Records game outcomes and significant events
-- **Session Manager**: Manages active game sessions
+## Estrutura do Projeto
 
-## Architecture Decisions
+A arquitetura do projeto segue princípios de separação de responsabilidades e foi refatorada para melhorar a manutenibilidade e testabilidade:
 
-### Technology Stack
-- **Backend**: Python with socket programming for P2P connectivity
-- **Frontend**: Pygame for game visualization and user interaction
-- **Data Storage**: SQLite for persistent player data
-- **Networking**: Custom socket implementation using Python's `socket` library
-
-### Application Structure
 ```
-blackjack_p2p/
-├── client/
-│   ├── ui/                  # Pygame UI components
-│   ├── network/             # Socket client implementation
-│   └── game_client.py       # Client entry point
-├── server/
-│   ├── matchmaking.py       # Optional matchmaking server
-│   └── lobby_server.py      # Minimal central server for discovery
-├── shared/
-│   ├── models/              # Game object definitions
-│   │   ├── card.py
-│   │   ├── deck.py
-│   │   ├── hand.py
-│   │   ├── player.py
-│   │   └── game.py
-│   ├── game_logic/          # Game rules and mechanics
-│   │   ├── rules.py
-│   │   ├── bet_manager.py
-│   │   └── state_manager.py
-│   ├── network/             # Network protocol definitions
-│   │   ├── message.py
-│   │   ├── serializer.py
-│   │   └── p2p_manager.py
-│   └── utils/               # Shared utilities
-├── data/
-│   ├── database.py          # Database interface
-│   └── file_storage.py      # File-based storage
-└── main.py                  # Application entry point
+client/
+├── game_client.py     # Cliente principal do jogo
+├── game_interface.py  # Implementação da interface do jogo
+├── game_ui.py         # Componentes de UI reutilizáveis
+├── ui_manager.py      # Gerenciador de UI centralizado
+├── run_tests.py       # Script para executar testes de regressão
+├── tests/             # Testes automatizados
+│   ├── __init__.py
+│   ├── test_game_logic.py    # Testes da lógica do jogo
+│   ├── test_ui_manager.py    # Testes dos componentes de UI
+│   └── test_integration.py   # Testes de integração
+└── assets/            # Imagens, sons e outros recursos
 ```
 
-### P2P Network Architecture
-- **Hybrid P2P Model**: Use a lightweight central server for discovery, then direct P2P for gameplay
-- **Host-Based Games**: One player hosts the game (acts as server), others connect as clients
-- **Fallback Mechanism**: If direct P2P fails, relay through the minimal central server
+## Melhorias Implementadas
 
-### Communication Protocol
-- Custom message format for game events:
-  ```json
-  {
-    "type": "GAME_ACTION",
-    "action": "HIT",
-    "player_id": "uuid",
-    "timestamp": 1234567890,
-    "game_id": "uuid"
-  }
-  ```
+### 1. Refatoração da Arquitetura
 
-## Data Management Strategy
+A base de código foi refatorada para seguir uma arquitetura mais modular:
 
-### Player Data
-- Store core player information (username, uuid, balance) in SQLite
-- Encrypt sensitive data like balance to prevent cheating
+- **Separação de Responsabilidades**: Interface de usuário separada da lógica de jogo
+- **Reusabilidade**: Componentes reutilizáveis para diferentes telas
+- **Manutenibilidade**: Código melhor organizado e documentado
+- **Testabilidade**: Estrutura que facilita testes automatizados
 
-### Game State
-- In-memory during active games
-- Serialized for network transmission
-- Basic game logs stored in text files for auditing
+### 2. Melhorias Visuais
 
-### Session Management
-- Temporary game sessions stored in memory
-- Option to persist incomplete games to files for recovery
+- **Tela de Seleção de Bots**: Interface aprimorada com botões interativos e efeitos visuais
+- **Interface de Jogo**: Mesa com visual realista, painéis informativos e controles responsivos
+- **Efeitos de Hover**: Feedback visual ao passar o mouse sobre elementos interativos
+- **Sombras e Gradientes**: Elementos visuais para melhorar a profundidade e legibilidade
+
+### 3. Testes Automatizados
+
+Implementação de uma suíte de testes completa para garantir a qualidade do código:
+
+- **Testes de Unidade**: Validam componentes individuais do sistema
+- **Testes de Integração**: Verificam a interação entre diferentes partes
+- **Script de Execução**: Ferramenta prática para executar todos os testes
+
+## Configuração
+
+### Requisitos
+
+- Python 3.x
+- Pygame 2.x
+- Colorama (para saída colorida nos testes)
+
+### Instalação
+
+```bash
+# Clone o repositório
+git clone https://github.com/seu-usuario/blackjack.git
+cd blackjack
+
+# Instale as dependências
+pip install pygame colorama
+```
+
+## Execução
+
+```bash
+# Execute o jogo
+cd client
+python game_client.py
+```
+
+## Testes
+
+O projeto inclui testes automatizados para garantir a qualidade do código:
+
+```bash
+# Execute todos os testes
+python client/run_tests.py
+
+# Execute apenas testes específicos
+python client/run_tests.py -t ui        # Testes de interface
+python client/run_tests.py -t game      # Testes de lógica de jogo
+python client/run_tests.py -t integration  # Testes de integração
+
+# Modo verbose para mais detalhes
+python client/run_tests.py -v
+```
+
+## Contribuições
+
+Contribuições são bem-vindas! Para contribuir:
+
+1. Fork este repositório
+2. Crie sua branch de feature (`git checkout -b feature/nova-funcionalidade`)
+3. Faça commit das suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
+4. Push para a branch (`git push origin feature/nova-funcionalidade`)
+5. Abra um Pull Request
+
+## Licença
+
+Este projeto está licenciado sob a [Licença MIT](LICENSE).

@@ -2,7 +2,7 @@ import pygame
 import sys
 import os
 from pygame.locals import *
-import json
+
 # Adicione o diretório raiz ao path para importar os módulos compartilhados
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -81,20 +81,22 @@ def show_splash_screen():
         if elapsed_time >= 3:
             running = False
 
-if __name__ == "__main__":
-    # Verificar se o arquivo de dados do jogador existe, se não, criar com saldo inicial
-    data_file = os.path.join(os.path.dirname(__file__), 'player_data.txt')
-    if not os.path.exists(data_file):
-        try:
-            with open(data_file, 'w') as f:
-                 # Escreve um jogador padrão se o arquivo não existir
-                 default_data = {"Player": 1000} # Saldo inicial de 1000
-                 json.dump(default_data, f)
-            print(f"Arquivo {data_file} criado com jogador padrão.")
-        except Exception as e:
-             print(f"Erro ao criar arquivo de dados inicial: {e}")
+def main():
+    """Função principal"""
+    try:
+        # Mostrar tela de splash
+        show_splash_screen()
 
-    client = BlackjackClient()
-    client.start()
+        # Iniciar o jogo
+        client = BlackjackClient()
+        client.start()
+
+    except Exception as e:
+        print(f"Erro ao iniciar o jogo: {e}")
+        pygame.quit()
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
 
 
