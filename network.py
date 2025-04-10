@@ -66,69 +66,24 @@ class NetworkManager:
     
     def send_message(self, message):
         try:
-            # Converte a mensagem para JSON e codifica
-            message_bytes = json.dumps(message).encode('utf-8')
-            # Adiciona o tamanho da mensagem como cabeçalho (4 bytes em formato de inteiro)
-            message_length = len(message_bytes)
-            header = message_length.to_bytes(4, byteorder='big')
-            
-            # Envia primeiro o cabeçalho, depois a mensagem
-            self.peer_socket.sendall(header + message_bytes)
-            print(f"Mensagem enviada: {message.get('type', 'unknown')} ({message_length} bytes)")
+            self.peer_socket.sendall(json.dumps(message).encode('utf-8'))
         except Exception as e:
-            print(f"Falha ao enviar mensagem: {e}")
+            print(f"Failed to send message: {e}")
             self.is_connected = False
     
     def receive_messages(self):
-        """Recebe e processa mensagens do outro jogador"""
         while self.is_connected:
             try:
-                # Primeiro recebe o cabeçalho com o tamanho da mensagem
-                header = self.peer_socket.recv(4)
-                if not header or len(header) != 4:
-                    print("Conexão fechada ou cabeçalho inválido")
+                data = self.peer_socket.recv(1024)
+                if not data:
                     break
                 
-                # Converte o cabeçalho para inteiro
-                message_length = int.from_bytes(header, byteorder='big')
-                
-                # Recebe a mensagem completa baseada no tamanho do cabeçalho
-                data = b''
-                bytes_received = 0
-                
-                while bytes_received < message_length:
-                    chunk = self.peer_socket.recv(min(1024, message_length - bytes_received))
-                    if not chunk:
-                        print("Conexão fechada durante recebimento de mensagem")
-                        break
-                    data += chunk
-                    bytes_received += len(chunk)
-                
-                if bytes_received < message_length:
-                    print(f"Mensagem incompleta recebida: {bytes_received}/{message_length} bytes")
-                    break
-                
-                # Decodifica a mensagem
                 message = json.loads(data.decode('utf-8'))
-                print(f"Mensagem recebida: {message.get('type', 'unknown')} ({message_length} bytes)")
-                
-                # Processa a mensagem no thread principal
                 self.game.handle_message(message)
-            except json.JSONDecodeError as e:
-                print(f"Erro ao decodificar mensagem JSON: {e}")
-            except ConnectionResetError:
-                print("Conexão reiniciada pelo par")
-                self.is_connected = False
-                break
             except Exception as e:
-                print(f"Erro ao receber mensagem: {e}")
+                print(f"Error receiving message: {e}")
                 self.is_connected = False
                 break
-        
-        print("Loop de recebimento de mensagens encerrado")
-        if self.game.game_state == GameState.PLAYING:
-            # Voltar para o menu se a conexão cair durante o jogo
-            self.game.game_state = GameState.MENU
     
     def send_game_state(self, player):
         hand_data = [{'value': card.value, 'suit': card.suit} for card in player.hand]

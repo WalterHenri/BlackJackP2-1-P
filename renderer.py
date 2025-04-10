@@ -216,46 +216,10 @@ class GameRenderer:
             restart_rect = restart_text.get_rect(center=(SCREEN_WIDTH // 2, panel_rect.y + 170))
             self.screen.blit(restart_text, restart_rect)
     
-    def draw_game(self, local_player, remote_player, is_local_turn):
+    def draw_game(self, local_player, remote_player):
         # Usa a imagem de fundo em vez de preenchimento sólido
         self.screen.blit(self.background_image, (0, 0))
         
-        # Desenha as mãos dos jogadores
         self.draw_hand(local_player, True)
         self.draw_hand(remote_player, False)
-        
-        # Desenha o indicador de turno
-        self.draw_turn_indicator(is_local_turn)
-        
-        # Só desenha os botões se for a vez do jogador local e ele ainda estiver jogando
-        if is_local_turn and local_player.status == "playing":
-            self.draw_buttons(local_player.status)
-    
-    def draw_turn_indicator(self, is_local_turn):
-        # Cria um painel semitransparente para indicar de quem é a vez
-        panel_width, panel_height = 400, 60
-        panel_rect = pygame.Rect(
-            SCREEN_WIDTH//2 - panel_width//2,
-            SCREEN_HEIGHT//2 - panel_height//2,
-            panel_width,
-            panel_height
-        )
-        
-        # Desenha o painel com transparência
-        s = pygame.Surface((panel_rect.width, panel_rect.height), pygame.SRCALPHA)
-        s.fill((0, 0, 0, 160))  # Preto com 60% de transparência
-        pygame.draw.rect(s, (0, 0, 0, 160), pygame.Rect(0, 0, panel_width, panel_height), border_radius=15)
-        self.screen.blit(s, panel_rect)
-        
-        # Adiciona uma borda dourada
-        pygame.draw.rect(self.screen, GOLD, panel_rect, 2, border_radius=15)
-        
-        # Define o texto baseado em quem é a vez
-        if is_local_turn:
-            turn_text = self.custom_font.render("Sua vez! Escolha uma ação.", True, WHITE)
-        else:
-            turn_text = self.custom_font.render("Aguardando jogada do oponente...", True, WHITE)
-        
-        # Centraliza o texto
-        turn_rect = turn_text.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2))
-        self.screen.blit(turn_text, turn_rect) 
+        self.draw_buttons(local_player.status) 

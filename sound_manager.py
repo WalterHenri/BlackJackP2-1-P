@@ -1,138 +1,120 @@
 import pygame
 import os
+import random
 
 class SoundManager:
-    """
-    Classe responsável por gerenciar os sons do jogo.
-    """
     def __init__(self, settings=None):
-        """
-        Inicializa o gerenciador de sons.
+        # Inicializar o mixer para reprodução de áudio
+        pygame.mixer.init()
         
-        Args:
-            settings: Referência à classe Settings para verificar configurações de som
-        """
-        # Inicializa o mixer do pygame se ainda não estiver inicializado
-        if not pygame.mixer.get_init():
-            pygame.mixer.init()
-            
+        # Armazenar referência às configurações do jogo
         self.settings = settings
         
-        # Carrega os sons do jogo
+        # Carregar os sons do jogo
         self.sounds = {
-            'card': pygame.mixer.Sound('assets/card-sound.mp3'),
+            'card': pygame.mixer.Sound('assets/card-sound.mp3')
         }
         
-        # Define o volume padrão para os efeitos sonoros
-        self.set_sound_volume(0.5)
+        # Ajustar volume inicial dos efeitos sonoros
+        self.adjust_sound_volume(0.5)  # 50% do volume
         
-        # Configuração para música de fundo (com múltiplas alternativas)
-        self.music_options = [
-            'assets/background-music.mp3',
-            'assets/bg-music.mp3',
-            'assets/music.mp3'
-        ]
-        self.background_music = self.find_music_file()
-        self.music_volume = 0.3
-        self.music_loaded = False
+        # Carregar músicas de fundo
+        self.music_files = []
+        self.load_music_files()
         
-        # Inicializa a música de fundo, se habilitada e disponível
-        if self.background_music:
-            self.initialize_music()
-        else:
-            print("Aviso: Nenhum arquivo de música de fundo encontrado. " +
-                 "Adicione um arquivo em uma das seguintes localizações: " + 
-                 ", ".join(self.music_options))
+        # Controle de música
+        self.current_music = None
+        self.music_volume = 0.3  # 30% do volume
+        pygame.mixer.music.set_volume(self.music_volume)
     
-    def find_music_file(self):
-        """Procura um arquivo de música válido entre as opções disponíveis"""
-        for music_file in self.music_options:
-            if os.path.exists(music_file):
-                return music_file
-        return None
+    def load_music_files(self):
+        """
+        Carrega todos os arquivos MP3 da pasta assets/musgas
+        """
+        music_dir = "assets/musgas"
+        
+        # Verifica se o diretório existe
+        if not os.path.exists(music_dir):
+            print(f"Diretório {music_dir} não encontrado.")
+            return
+        
+        # Lista todos os arquivos .mp3 na pasta
+        for file in os.listdir(music_dir):
+            if file.lower().endswith('.mp3'):
+                self.music_files.append(os.path.join(music_dir, file))
+        
+        print(f"Carregadas {len(self.music_files)} músicas.")
     
-    def initialize_music(self):
-        """Inicializa a música de fundo baseado nas configurações"""
-        if not self.background_music:
+    def play_random_music(self):
+        """
+        Reproduz uma música aleatória da biblioteca se a música estiver habilitada
+        """
+        if not self.music_files:
             return
             
-        try:
-            # Verifica se a música está habilitada nas configurações
-            music_enabled = True
-            if self.settings and hasattr(self.settings, 'music_enabled'):
-                music_enabled = self.settings.music_enabled
-                
-            if music_enabled:
-                # Carrega e inicia a música de fundo
-                pygame.mixer.music.load(self.background_music)
-                pygame.mixer.music.set_volume(self.music_volume)
-                pygame.mixer.music.play(-1)  # -1 para reprodução em loop
-                self.music_loaded = True
-            else:
-                # Garante que a música esteja parada se desabilitada
-                if pygame.mixer.music.get_busy():
-                    pygame.mixer.music.stop()
-        except Exception as e:
-            print(f"Erro ao inicializar música: {e}")
-            self.music_loaded = False
-    
-    def set_sound_volume(self, volume):
-        """Define o volume de todos os efeitos sonoros (0.0 a 1.0)"""
-        for sound in self.sounds.values():
-            sound.set_volume(volume)
-    
-    def set_music_volume(self, volume):
-        """Define o volume da música de fundo (0.0 a 1.0)"""
-        self.music_volume = volume
-        if self.music_loaded:
-            pygame.mixer.music.set_volume(volume)
-    
-    def update_music_state(self):
-        """Atualiza o estado da música baseado nas configurações atuais"""
-        if not self.background_music:
-            return
+        if self.settings and hasattr(self.settings, 'music_enabled') and self.settings.music_enabled:
+            # Escolhe uma música aleatória
+            next_music = random.choice(self.music_files)
             
+            # Carrega e toca a música
+            pygame.mixer.music.load(next_music)
+            pygame.mixer.music.play()
+            
+            # Armazena a música atual
+            self.current_music = next_music
+            
+            print(f"Tocando: {os.path.basename(next_music)}")
+    
+    def stop_music(self):
+        """
+        Para a reprodução da música atual
+        """
+        pygame.mixer.music.stop()
+        self.current_music = None
+    
+    def toggle_music(self):
+        """
+        Alterna a reprodução de música com base nas configurações
+        """
         if self.settings and hasattr(self.settings, 'music_enabled'):
-            if self.settings.music_enabled:
-                # Se música habilitada mas não está tocando, inicia
-                if not pygame.mixer.music.get_busy():
-                    try:
-                        pygame.mixer.music.load(self.background_music)
-                        pygame.mixer.music.set_volume(self.music_volume)
-                        pygame.mixer.music.play(-1)
-                        self.music_loaded = True
-                    except Exception as e:
-                        print(f"Erro ao iniciar música: {e}")
-                        self.music_loaded = False
-            else:
-                # Se música desabilitada mas está tocando, para
-                if pygame.mixer.music.get_busy():
-                    pygame.mixer.music.stop()
+            if self.settings.music_enabled and not pygame.mixer.music.get_busy():
+                self.play_random_music()
+            elif not self.settings.music_enabled and pygame.mixer.music.get_busy():
+                self.stop_music()
+    
+    def check_music_ended(self):
+        """
+        Verifica se a música atual terminou e inicia outra música aleatória
+        Deve ser chamado no loop principal do jogo
+        """
+        if self.settings and hasattr(self.settings, 'music_enabled') and self.settings.music_enabled:
+            if not pygame.mixer.music.get_busy() and self.current_music is not None:
+                # A música acabou, toca outra
+                self.play_random_music()
+            elif self.current_music is None:
+                # Nenhuma música tocando, inicia uma
+                self.play_random_music()
     
     def play_card_sound(self):
         """
-        Reproduz o som de carta sendo virada, verificando se a opção está habilitada
-        nas configurações.
+        Reproduz o som da carta sendo puxada, se estiver habilitado nas configurações
         """
-        # Verifica se as configurações permitem reproduzir o som
-        if self.settings and hasattr(self.settings, 'sound_enabled'):
-            if self.settings.sound_enabled:
-                self.sounds['card'].play()
-        else:
-            # Se não tiver acesso às configurações, reproduz o som por padrão
+        # Verifica se as configurações existem e o som está habilitado
+        if self.settings and hasattr(self.settings, 'sound_enabled') and self.settings.sound_enabled:
             self.sounds['card'].play()
     
-    def play_sound(self, sound_name):
+    def adjust_sound_volume(self, volume):
         """
-        Reproduz um som pelo nome.
-        
-        Args:
-            sound_name: Nome do som a ser reproduzido
+        Ajusta o volume dos efeitos sonoros
+        :param volume: Valor entre 0.0 e 1.0
         """
-        if sound_name in self.sounds:
-            # Somente reproduz se o som estiver habilitado
-            if self.settings and hasattr(self.settings, 'sound_enabled'):
-                if self.settings.sound_enabled:
-                    self.sounds[sound_name].play()
-            else:
-                self.sounds[sound_name].play() 
+        for sound in self.sounds.values():
+            sound.set_volume(volume)
+    
+    def adjust_music_volume(self, volume):
+        """
+        Ajusta o volume da música de fundo
+        :param volume: Valor entre 0.0 e 1.0
+        """
+        self.music_volume = volume
+        pygame.mixer.music.set_volume(volume) 

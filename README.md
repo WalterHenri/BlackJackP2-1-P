@@ -55,26 +55,6 @@ Para iniciar o jogo:
 python main.py
 ```
 
-## Sistema de Som e Música
-
-O jogo possui um sistema completo de som e música:
-
-- **Efeitos Sonoros**: Sons são reproduzidos quando cartas são distribuídas
-- **Música de Fundo**: Música ambiente durante o jogo
-- **Configurações**: É possível habilitar/desabilitar os sons e a música através da tela de configurações
-
-### Adicionar Música de Fundo Personalizada
-
-Para adicionar música de fundo ao jogo, coloque um arquivo MP3 em um dos seguintes caminhos:
-
-```
-assets/background-music.mp3
-assets/bg-music.mp3
-assets/music.mp3
-```
-
-O sistema tentará carregar o primeiro arquivo encontrado na ordem acima.
-
 ## Estrutura do Projeto
 
 O projeto está dividido em vários módulos:
@@ -91,8 +71,6 @@ O projeto está dividido em vários módulos:
 - `renderer.py` - Renderização de elementos do jogo
 - `event_handler.py` - Processamento de eventos
 - `game.py` - Lógica principal do jogo
-- `sound_manager.py` - Gerenciamento de sons e música
-- `settings.py` - Configurações do jogo
 
 ## Resolução de Problemas
 

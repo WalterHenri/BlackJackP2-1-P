@@ -33,13 +33,11 @@ class BlackjackGame:
         self.local_player = None
         self.remote_player = None
         
-        # Inicializa o gerenciador de sons com as configurações
-        self.sound_manager = SoundManager(self.settings)
-        
         # Initialize subsystems
         self.network = NetworkManager(self)
         self.renderer = GameRenderer(self.screen, self.font, self.small_font)
         self.event_handler = EventHandler(self)
+        self.sound_manager = SoundManager(self.settings)
         
         # Room client para comunicação com o servidor de salas
         self.room_client = RoomClient(ROOM_SERVER_HOST, ROOM_SERVER_PORT)
@@ -56,10 +54,6 @@ class BlackjackGame:
         self.deck = create_sprite_deck()
         self.local_player = Player("You")
         self.remote_player = Player("Opponent")
-        
-        # Inicializa o controle de turnos
-        # O host sempre começa jogando
-        self.is_local_turn = is_host
         
         # Networking setup
         self.network.setup_network(is_host, peer_address)
@@ -80,10 +74,7 @@ class BlackjackGame:
         self.network.send_game_state(self.local_player)
     
     def handle_message(self, message):
-        msg_type = message.get('type', 'unknown')
-        print(f"Recebida mensagem do tipo: {msg_type}")
-        
-        if msg_type == 'game_state':
+        if message.get('type') == 'game_state':
             # Update remote player's hand and status
             remote_hand = message.get('hand', [])
             
@@ -101,42 +92,25 @@ class BlackjackGame:
             self.remote_player.status = message.get('status', 'playing')
             self.remote_player.calculate_score()
             
-            # Se o oponente estourou, o jogo termina imediatamente
-            if self.remote_player.status == "busted":
-                print("Oponente estourou! Finalizando o jogo.")
-                self.game_state = GameState.GAME_OVER
-            # Se ambos pararam, o jogo também termina
-            elif self.local_player.status != "playing" and self.remote_player.status != "playing":
+            # Check if game is over
+            if self.local_player.status != "playing" and self.remote_player.status != "playing":
                 self.game_state = GameState.GAME_OVER
         
-        elif msg_type == 'restart_game':
+        elif message.get('type') == 'restart_game':
             # O host iniciou um novo jogo, então reiniciamos também
             # A diferença é que não enviamos mensagem de reinício de volta (para evitar loop)
             self.deck = create_sprite_deck()
             self.local_player = Player("You")
             self.remote_player = Player("Opponent")
             self.game_state = GameState.PLAYING
-            # Para o cliente, é a vez do host jogar no início
-            self.is_local_turn = False
-            print("Jogo reiniciado pelo host. Aguardando primeiro turno do host.")
-            
-        elif msg_type == 'host_left':
+            # Não precisamos distribuir as cartas iniciais aqui, pois o host fará isso e enviará via game_state
+
+        elif message.get('type') == 'host_left':
             # O host saiu da mesa, então também devemos voltar para a lista de salas
             print("O host saiu da mesa. Retornando para a lista de salas.")
             self.network.close_connection()
             self.game_state = GameState.ROOM_LIST
             self.room_client.list_rooms()
-            
-        elif msg_type == 'end_turn':
-            # O oponente encerrou seu turno, agora é nossa vez
-            print("Mensagem de fim de turno recebida. Agora é a nossa vez de jogar.")
-            self.is_local_turn = True
-            
-        elif msg_type == 'hit':
-            print("Oponente pediu mais uma carta")
-            
-        elif msg_type == 'stand':
-            print("Oponente decidiu parar")
     
     def handle_room_server_message(self, message):
         """Processa mensagens do servidor de salas"""
@@ -167,26 +141,22 @@ class BlackjackGame:
             self.room_client.list_rooms()
     
     def hit(self):
-        if self.game_state == GameState.PLAYING and self.local_player.status == "playing" and self.is_local_turn:
-            # Reproduz o som de carta
+        if self.game_state == GameState.PLAYING and self.local_player.status == "playing":
+            # Reproduz o som da carta sendo puxada
             self.sound_manager.play_card_sound()
             
-            # Processa a ação de pedir carta
+            # Adiciona uma nova carta à mão do jogador
             self.local_player.hit(self.deck)
             self.network.send_message({'type': 'hit'})
             self.network.send_game_state(self.local_player)
             
             # Check if busted
             if self.local_player.status == "busted":
-                # Se o jogador estourar, o jogo termina imediatamente
-                print("Jogador local estourou! Finalizando o jogo.")
-                self.game_state = GameState.GAME_OVER
-            else:
-                # Apenas passa o turno se não estourou
-                self.end_turn()
+                if self.remote_player.status != "playing":
+                    self.game_state = GameState.GAME_OVER
     
     def stand(self):
-        if self.game_state == GameState.PLAYING and self.local_player.status == "playing" and self.is_local_turn:
+        if self.game_state == GameState.PLAYING and self.local_player.status == "playing":
             self.local_player.stand()
             self.network.send_message({'type': 'stand'})
             self.network.send_game_state(self.local_player)
@@ -194,16 +164,6 @@ class BlackjackGame:
             # Check if game is over
             if self.remote_player.status != "playing":
                 self.game_state = GameState.GAME_OVER
-            else:
-                # Após parar, o turno passa para o oponente
-                self.end_turn()
-    
-    def end_turn(self):
-        # Encerra o turno atual e passa para o oponente
-        self.is_local_turn = False
-        # Avisa o oponente que agora é a vez dele
-        print(f"Enviando mensagem de fim de turno para o oponente")
-        self.network.send_message({'type': 'end_turn'})
     
     def determine_winner(self):
         if self.local_player.status == "busted":
@@ -224,10 +184,6 @@ class BlackjackGame:
         self.remote_player = Player("Opponent")
         self.game_state = GameState.PLAYING
         
-        # O host sempre começa jogando quando reinicia o jogo
-        if hasattr(self.network, 'is_host'):
-            self.is_local_turn = self.network.is_host
-            
         # Envia mensagem para o oponente informando que o jogo foi reiniciado
         if hasattr(self.network, 'is_host') and self.network.is_host:
             self.network.send_message({'type': 'restart_game'})
@@ -315,6 +271,12 @@ class BlackjackGame:
                 elif self.game_state == GameState.GAME_OVER:
                     self.event_handler.handle_game_over_events(event)
             
+            # Verifica mudanças de estado para iniciar/parar música
+            self.check_game_state_for_music()
+            
+            # Verifica se a música terminou e toca a próxima
+            self.sound_manager.check_music_ended()
+            
             # Draw
             if self.game_state == GameState.MENU:
                 self.menu.draw_menu()
@@ -329,10 +291,10 @@ class BlackjackGame:
             elif self.game_state == GameState.WAITING:
                 self.renderer.draw_waiting_screen(self.menu)
             elif self.game_state == GameState.PLAYING:
-                self.renderer.draw_game(self.local_player, self.remote_player, self.is_local_turn)
+                self.renderer.draw_game(self.local_player, self.remote_player)
             elif self.game_state == GameState.GAME_OVER:
                 # Desenha o jogo primeiro (para mostrar as cartas)
-                self.renderer.draw_game(self.local_player, self.remote_player, False)  # Em game over, ninguém está jogando
+                self.renderer.draw_game(self.local_player, self.remote_player)
                 # Depois desenha o painel de fim de jogo, passando se é host ou não
                 is_host = self.network.is_host if hasattr(self.network, 'is_host') else False
                 self.renderer.draw_game_over(self.determine_winner(), is_host)
@@ -341,7 +303,24 @@ class BlackjackGame:
             self.clock.tick(FPS)
         
         # Limpeza ao encerrar
+        self.sound_manager.stop_music()
         self.network.close_connection()
         self.room_client.disconnect()
         pygame.quit()
-        sys.exit() 
+        sys.exit()
+    
+    def check_game_state_for_music(self):
+        """
+        Verifica mudanças de estado do jogo para iniciar ou parar a música de fundo
+        """
+        # Estados onde a música deve tocar
+        music_states = [GameState.WAITING, GameState.PLAYING]
+        
+        # Se estamos em um estado onde a música deve tocar
+        if self.game_state in music_states:
+            self.sound_manager.check_music_ended()
+        # Se não estamos em um estado de música e não é a tela de configurações
+        elif self.game_state != GameState.SETTINGS:
+            # Parar música se estiver tocando
+            if pygame.mixer.music.get_busy():
+                self.sound_manager.stop_music() 

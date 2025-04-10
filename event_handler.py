@@ -31,23 +31,38 @@ class EventHandler:
             elif self.game.settings.sound_off_button.collidepoint(mouse_pos):
                 self.game.settings.sound_enabled = False
             
-            # Botões de Música
-            elif self.game.settings.music_on_button.collidepoint(mouse_pos):
-                old_music_state = self.game.settings.music_enabled
-                self.game.settings.music_enabled = True
-                # Atualiza o estado da música se houve mudança
-                if not old_music_state:
-                    self.game.sound_manager.update_music_state()
-            elif self.game.settings.music_off_button.collidepoint(mouse_pos):
-                old_music_state = self.game.settings.music_enabled
-                self.game.settings.music_enabled = False
-                # Atualiza o estado da música se houve mudança
-                if old_music_state:
-                    self.game.sound_manager.update_music_state()
+            # Iniciar arrasto do slider de volume
+            elif self.game.settings.slider_rect.collidepoint(mouse_pos) or self.game.settings.slider_button_rect.collidepoint(mouse_pos):
+                self.game.settings.dragging_slider = True
+                # Atualiza o slider com a posição atual do mouse
+                self.game.settings.update_slider_position(mouse_pos[0])
+                # Aplica o novo volume à música
+                self.game.sound_manager.adjust_music_volume(self.game.settings.music_volume / 100)
+                # Atualiza o estado da música (ligado/desligado)
+                if self.game.settings.music_volume == 0:
+                    self.game.sound_manager.stop_music()
+                elif not pygame.mixer.music.get_busy() and self.game.settings.music_enabled:
+                    self.game.sound_manager.play_random_music()
             
             # Botão Voltar
             elif self.game.settings.back_button.collidepoint(mouse_pos):
                 self.game.game_state = GameState.MENU
+        
+        # Quando o mouse se move enquanto está arrastando o slider
+        elif event.type == pygame.MOUSEMOTION and self.game.settings.dragging_slider:
+            # Atualiza a posição do slider
+            self.game.settings.update_slider_position(event.pos[0])
+            # Aplica o novo volume à música
+            self.game.sound_manager.adjust_music_volume(self.game.settings.music_volume / 100)
+            # Atualiza o estado da música (ligado/desligado)
+            if self.game.settings.music_volume == 0 and pygame.mixer.music.get_busy():
+                self.game.sound_manager.stop_music()
+            elif self.game.settings.music_volume > 0 and not pygame.mixer.music.get_busy() and self.game.settings.music_enabled:
+                self.game.sound_manager.play_random_music()
+        
+        # Quando solta o botão do mouse, para de arrastar o slider
+        elif event.type == pygame.MOUSEBUTTONUP:
+            self.game.settings.dragging_slider = False
     
     def handle_join_screen_events(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
@@ -85,8 +100,7 @@ class EventHandler:
                 self.game.room_client.list_rooms()
     
     def handle_playing_events(self, event):
-        # Processa cliques somente se for a vez do jogador local e ele ainda estiver jogando
-        if event.type == pygame.MOUSEBUTTONDOWN and self.game.local_player.status == "playing" and self.game.is_local_turn:
+        if event.type == pygame.MOUSEBUTTONDOWN and self.game.local_player.status == "playing":
             mouse_pos = pygame.mouse.get_pos()
             if self.game.renderer.hit_button.collidepoint(mouse_pos):
                 self.game.hit()
