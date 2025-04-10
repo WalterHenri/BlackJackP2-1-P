@@ -1,117 +1,110 @@
-# Blackjack - Cliente em Python com Pygame
+# Peer-to-Peer Blackjack Game
 
-![Blackjack](https://img.shields.io/badge/Blackjack-Client-green)
-![Python](https://img.shields.io/badge/Python-3.x-blue)
-![Pygame](https://img.shields.io/badge/Pygame-2.x-yellow)
+Uma versão simples do jogo Blackjack (21) com networking peer-to-peer e sistema de salas, construído com Python e Pygame.
 
-Um jogo de Blackjack em Python utilizando Pygame para a interface gráfica. Este cliente permite jogar Blackjack sozinho contra bots ou em modo multiplayer.
+## Requisitos
 
-## Recursos Principais
+- Python 3.6+
+- Pygame
 
-- **Interface Gráfica Atraente**: Design visualmente agradável com elementos interativos.
-- **Modo Solo com Bots**: Jogue contra 1-3 bots com comportamento adaptado.
-- **Controles Intuitivos**: Apostas, Hit, Stand e outras ações de jogo.
-- **Efeitos Visuais**: Animações, sombras e efeitos de hover para melhor experiência.
+Instale o Pygame usando pip:
+
+```
+pip install pygame
+```
+
+## Como Jogar
+
+O jogo segue as regras básicas do Blackjack:
+- Cada jogador começa com 2 cartas
+- Os jogadores decidem se querem "hit" (pedir mais uma carta) ou "stand" (ficar com as cartas atuais)
+- O objetivo é chegar o mais próximo possível de 21 sem ultrapassar ("busting")
+- O jogador com a mão mais próxima de 21 ao final da rodada vence
+
+## Controles
+
+- **Botão Hit**: Clique para pedir mais uma carta
+- **Botão Stand**: Clique para parar de pedir cartas e encerrar seu turno
+- Após o fim de um jogo:
+  - Pressione **R** para reiniciar
+  - Pressione **Q** para voltar ao menu de salas
+
+## Sistema de Salas
+
+O jogo agora possui um sistema de salas que permite:
+- Criar salas com nomes personalizados
+- Visualizar salas disponíveis
+- Entrar em salas existentes
+- Pesquisa automática de salas disponíveis
+
+### Iniciando o Servidor de Salas
+
+Antes de jogar, é necessário iniciar o servidor de salas:
+
+```bash
+python start_room_server.py
+```
+
+O servidor de salas gerencia todas as salas disponíveis e permite que os jogadores encontrem uns aos outros.
+
+### Iniciando o Jogo
+
+Para iniciar o jogo:
+
+```bash
+python main.py
+```
 
 ## Estrutura do Projeto
 
-A arquitetura do projeto segue princípios de separação de responsabilidades e foi refatorada para melhorar a manutenibilidade e testabilidade:
+O projeto está dividido em vários módulos:
 
+- `main.py` - Ponto de entrada da aplicação
+- `constants.py` - Constantes e enumerações
+- `card.py` - Classes para cartas e baralho
+- `player.py` - Classe que representa o jogador
+- `menu.py` - Interface do menu principal
+- `room_menu.py` - Interface de gerenciamento de salas
+- `room_client.py` - Cliente para o servidor de salas
+- `room_server.py` - Servidor que gerencia as salas
+- `network.py` - Gerenciamento de conexões peer-to-peer
+- `renderer.py` - Renderização de elementos do jogo
+- `event_handler.py` - Processamento de eventos
+- `game.py` - Lógica principal do jogo
+
+## Resolução de Problemas
+
+- Certifique-se de que o servidor de salas esteja em execução antes de iniciar o jogo
+- Por padrão, o servidor de salas usa a porta 5001 e o jogo usa a porta 5000
+- O sistema depende da descoberta correta do IP da máquina, o que pode não funcionar em algumas redes
+- Se tiver problemas de conexão, verifique as configurações de firewall e certifique-se de que as portas estão abertas
+- Se precisar jogar através da internet, pode ser necessário configurar o encaminhamento de portas no roteador
+
+## Networking
+
+This game uses a peer-to-peer connection model:
+
+### To Host a Game:
 ```
-client/
-├── game_client.py     # Cliente principal do jogo
-├── game_interface.py  # Implementação da interface do jogo
-├── game_ui.py         # Componentes de UI reutilizáveis
-├── ui_manager.py      # Gerenciador de UI centralizado
-├── run_tests.py       # Script para executar testes de regressão
-├── tests/             # Testes automatizados
-│   ├── __init__.py
-│   ├── test_game_logic.py    # Testes da lógica do jogo
-│   ├── test_ui_manager.py    # Testes dos componentes de UI
-│   └── test_integration.py   # Testes de integração
-└── assets/            # Imagens, sons e outros recursos
-```
-
-## Melhorias Implementadas
-
-### 1. Refatoração da Arquitetura
-
-A base de código foi refatorada para seguir uma arquitetura mais modular:
-
-- **Separação de Responsabilidades**: Interface de usuário separada da lógica de jogo
-- **Reusabilidade**: Componentes reutilizáveis para diferentes telas
-- **Manutenibilidade**: Código melhor organizado e documentado
-- **Testabilidade**: Estrutura que facilita testes automatizados
-
-### 2. Melhorias Visuais
-
-- **Tela de Seleção de Bots**: Interface aprimorada com botões interativos e efeitos visuais
-- **Interface de Jogo**: Mesa com visual realista, painéis informativos e controles responsivos
-- **Efeitos de Hover**: Feedback visual ao passar o mouse sobre elementos interativos
-- **Sombras e Gradientes**: Elementos visuais para melhorar a profundidade e legibilidade
-
-### 3. Testes Automatizados
-
-Implementação de uma suíte de testes completa para garantir a qualidade do código:
-
-- **Testes de Unidade**: Validam componentes individuais do sistema
-- **Testes de Integração**: Verificam a interação entre diferentes partes
-- **Script de Execução**: Ferramenta prática para executar todos os testes
-
-## Configuração
-
-### Requisitos
-
-- Python 3.x
-- Pygame 2.x
-- Colorama (para saída colorida nos testes)
-
-### Instalação
-
-```bash
-# Clone o repositório
-git clone https://github.com/seu-usuario/blackjack.git
-cd blackjack
-
-# Instale as dependências
-pip install pygame colorama
+python blackjack.py
 ```
 
-## Execução
+You'll see a message "Waiting for opponent to connect..." and the server will listen on port 5000.
 
-```bash
-# Execute o jogo
-cd client
-python game_client.py
+### To Join a Game:
+```
+python blackjack.py [HOST_IP_ADDRESS]
 ```
 
-## Testes
+Replace `[HOST_IP_ADDRESS]` with the IP address of the host computer.
 
-O projeto inclui testes automatizados para garantir a qualidade do código:
-
-```bash
-# Execute todos os testes
-python client/run_tests.py
-
-# Execute apenas testes específicos
-python client/run_tests.py -t ui        # Testes de interface
-python client/run_tests.py -t game      # Testes de lógica de jogo
-python client/run_tests.py -t integration  # Testes de integração
-
-# Modo verbose para mais detalhes
-python client/run_tests.py -v
+Example:
+```
+python blackjack.py 192.168.1.100
 ```
 
-## Contribuições
+## Troubleshooting
 
-Contribuições são bem-vindas! Para contribuir:
-
-1. Fork este repositório
-2. Crie sua branch de feature (`git checkout -b feature/nova-funcionalidade`)
-3. Faça commit das suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
-4. Push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
-
-## Licença
-
-Este projeto está licenciado sob a [Licença MIT](LICENSE).
+- Make sure port 5000 is open and not blocked by firewall settings
+- The host must be reachable on the network by the client
+- If playing over the internet, port forwarding may be required on the host's router 
