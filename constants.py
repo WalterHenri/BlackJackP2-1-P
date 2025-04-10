@@ -27,4 +27,5 @@ class GameState(Enum):
     GAME_OVER = 3
     JOIN_SCREEN = 4
     ROOM_LIST = 5
-    CREATE_ROOM = 6 
+    CREATE_ROOM = 6
+    SETTINGS = 7 

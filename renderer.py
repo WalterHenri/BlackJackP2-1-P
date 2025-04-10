@@ -1,6 +1,7 @@
 import pygame
 import socket
 from constants import *
+from cards import SpriteSheet
 
 class GameRenderer:
     def __init__(self, screen, font, small_font):
@@ -8,78 +9,253 @@ class GameRenderer:
         self.font = font
         self.small_font = small_font
         
-        # Button dimensions for gameplay
-        self.hit_button = pygame.Rect(SCREEN_WIDTH // 4 - 50, SCREEN_HEIGHT - 100, 100, 40)
-        self.stand_button = pygame.Rect(3 * SCREEN_WIDTH // 4 - 50, SCREEN_HEIGHT - 100, 100, 40)
+        # Carrega a imagem de fundo
+        self.background_image = pygame.image.load("assets/capa2.png")
+        self.background_image = pygame.transform.scale(self.background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        
+        # Carrega a fonte personalizada
+        self.custom_font = pygame.font.Font("assets/font-jersey.ttf", 30)
+        self.small_custom_font = pygame.font.Font("assets/font-jersey.ttf", 20)
+        self.title_font = pygame.font.Font("assets/font-jersey.ttf", 40)
+        
+        # Carrega o sprite sheet das cartas
+        self.card_sprites = SpriteSheet("assets/cards.png")
+        
+        # Escala para as cartas (ajustar conforme necessário)
+        self.card_scale = 0.5  # 50% do tamanho original
+        
+        # Botões maiores para gameplay
+        button_width = 180
+        button_height = 60
+        button_y = SCREEN_HEIGHT - 80
+        
+        self.hit_button = pygame.Rect(
+            SCREEN_WIDTH // 2 - button_width - 30,  # 30px de espaço entre os botões
+            button_y,
+            button_width,
+            button_height
+        )
+        
+        self.stand_button = pygame.Rect(
+            SCREEN_WIDTH // 2 + 30,  # 30px de espaço entre os botões
+            button_y,
+            button_width,
+            button_height
+        )
     
     def draw_card(self, card, position):
-        rect = pygame.Rect(position[0], position[1], CARD_WIDTH, CARD_HEIGHT)
-        pygame.draw.rect(self.screen, WHITE, rect)
-        pygame.draw.rect(self.screen, BLACK, rect, 2)
+        # Obtém a sprite da carta correspondente
+        sprite = self.card_sprites.get_sprite(card.suit, card.value)
         
-        color = RED if card.suit in ['Hearts', 'Diamonds'] else BLACK
-        card_text = self.font.render(f"{card.value}", True, color)
-        suit_text = self.font.render(card.suit[0], True, color)
-        
-        self.screen.blit(card_text, (position[0] + 10, position[1] + 10))
-        self.screen.blit(suit_text, (position[0] + 10, position[1] + 40))
+        if sprite:
+            # Calcula o novo tamanho da carta
+            scaled_width = int(self.card_sprites.card_width * self.card_scale)
+            scaled_height = int(self.card_sprites.card_height * self.card_scale)
+            
+            # Redimensiona a sprite
+            scaled_sprite = pygame.transform.scale(sprite, (scaled_width, scaled_height))
+            
+            # Desenha a carta
+            self.screen.blit(scaled_sprite, position)
+        else:
+            # Fallback para desenho manual se a sprite não for encontrada
+            rect = pygame.Rect(position[0], position[1], CARD_WIDTH, CARD_HEIGHT)
+            pygame.draw.rect(self.screen, WHITE, rect)
+            pygame.draw.rect(self.screen, BLACK, rect, 2)
+            
+            color = RED if card.suit in ['Hearts', 'Diamonds'] else BLACK
+            card_text = self.font.render(f"{card.value}", True, color)
+            suit_text = self.font.render(card.suit[0], True, color)
+            
+            self.screen.blit(card_text, (position[0] + 10, position[1] + 10))
+            self.screen.blit(suit_text, (position[0] + 10, position[1] + 40))
     
     def draw_hand(self, player, is_local):
-        y_pos = SCREEN_HEIGHT - 350 if is_local else 50
-        label = "Your hand:" if is_local else "Opponent's hand:"
-        score_text = f"Score: {player.score}"
-        status_text = f"Status: {player.status}"
+        # Posicionamento vertical melhorado com maior distanciamento
+        y_pos = SCREEN_HEIGHT - 280 if is_local else 80
+        label = "Sua mão:" if is_local else "Oponente:"
+        score_text = f"Pontuação: {player.score}"
+        status_map = {"playing": "Jogando", "standing": "Parou", "busted": "Estourou"}
+        status_text = f"Status: {status_map.get(player.status, player.status)}"
         
-        label_surface = self.font.render(label, True, WHITE)
-        score_surface = self.font.render(score_text, True, WHITE)
-        status_surface = self.font.render(status_text, True, WHITE)
+        # Adiciona um fundo semitransparente para melhorar a visibilidade
+        # Ocupando quase toda a largura da tela com pequenas margens
+        margin = 20
+        info_bg_rect = pygame.Rect(margin, y_pos - 90, SCREEN_WIDTH - 2 * margin, 80)
+        s = pygame.Surface((info_bg_rect.width, info_bg_rect.height), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 128))  # Preto com 50% de transparência
         
-        self.screen.blit(label_surface, (50, y_pos - 40))
-        self.screen.blit(score_surface, (50, y_pos - 80))
-        self.screen.blit(status_surface, (250, y_pos - 80))
+        # Desenha o fundo com bordas arredondadas
+        pygame.draw.rect(s, (0, 0, 0, 128), pygame.Rect(0, 0, info_bg_rect.width, info_bg_rect.height), border_radius=15)
+        self.screen.blit(s, info_bg_rect)
+        
+        # Adiciona uma borda dourada fina
+        pygame.draw.rect(self.screen, GOLD, info_bg_rect, 2, border_radius=15)
+        
+        label_surface = self.custom_font.render(label, True, WHITE)
+        score_surface = self.custom_font.render(score_text, True, WHITE)
+        status_surface = self.custom_font.render(status_text, True, WHITE)
+        
+        self.screen.blit(label_surface, (50, y_pos - 80))
+        self.screen.blit(score_surface, (50, y_pos - 45))
+        self.screen.blit(status_surface, (350, y_pos - 45))
+        
+        # Calcula o espaçamento correto entre as cartas
+        card_spacing = int(self.card_sprites.card_width * self.card_scale * 0.5)
         
         for i, card in enumerate(player.hand):
-            self.draw_card(card, (50 + i * 30, y_pos))
+            self.draw_card(card, (50 + i * card_spacing, y_pos))
     
-    def draw_buttons(self):
-        pygame.draw.rect(self.screen, GREEN, self.hit_button)
-        pygame.draw.rect(self.screen, RED, self.stand_button)
-        
-        hit_text = self.font.render("Hit", True, WHITE)
-        stand_text = self.font.render("Stand", True, WHITE)
-        
-        self.screen.blit(hit_text, (self.hit_button.x + 35, self.hit_button.y + 10))
-        self.screen.blit(stand_text, (self.stand_button.x + 20, self.stand_button.y + 10))
+    def draw_buttons(self, player_status):
+        # Só mostra os botões se o jogador ainda estiver jogando
+        if player_status == "playing":
+            pygame.draw.rect(self.screen, GOLD, self.hit_button, border_radius=8)
+            pygame.draw.rect(self.screen, BLACK, self.hit_button, 4, border_radius=10)  # Contorno preto
+            hit_text = self.custom_font.render("Mais Uma", True, BLACK)
+            hit_text_rect = hit_text.get_rect(center=self.hit_button.center)
+            self.screen.blit(hit_text, hit_text_rect)
+            
+            pygame.draw.rect(self.screen, GOLD, self.stand_button, border_radius=8)
+            pygame.draw.rect(self.screen, BLACK, self.stand_button, 4, border_radius=10)  # Contorno preto
+            stand_text = self.custom_font.render("Parar", True, BLACK)
+            stand_text_rect = stand_text.get_rect(center=self.stand_button.center)
+            self.screen.blit(stand_text, stand_text_rect)
     
     def draw_waiting_screen(self, menu):
-        self.screen.fill(GREEN)
-        waiting_text = self.font.render("Waiting for opponent to connect...", True, WHITE)
-        self.screen.blit(waiting_text, (SCREEN_WIDTH // 2 - 200, SCREEN_HEIGHT // 2))
+        # Usa a imagem de fundo em vez de preenchimento sólido
+        self.screen.blit(self.background_image, (0, 0))
         
+        # Centraliza o texto "Aguardando um corajoso..."
+        waiting_text = self.custom_font.render("Aguardando um corajoso...", True, WHITE)
+        waiting_rect = waiting_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 30))
+        self.screen.blit(waiting_text, waiting_rect)
+        
+        # Centraliza as informações de IP e porta
         ip_info = socket.gethostbyname(socket.gethostname())
-        ip_text = self.small_font.render(f"Your IP address: {ip_info}", True, WHITE)
-        port_text = self.small_font.render(f"Port: 5000", True, WHITE)
+        ip_text = self.small_custom_font.render(f"Sua mesa: {ip_info}", True, WHITE)
+        ip_rect = ip_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 30))
+        self.screen.blit(ip_text, ip_rect)
         
-        self.screen.blit(ip_text, (SCREEN_WIDTH // 2 - 150, SCREEN_HEIGHT // 2 + 50))
-        self.screen.blit(port_text, (SCREEN_WIDTH // 2 - 50, SCREEN_HEIGHT // 2 + 80))
+        port_text = self.small_custom_font.render(f"Cadeira: 5000", True, WHITE)
+        port_rect = port_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 60))
+        self.screen.blit(port_text, port_rect)
         
-        # Back button
-        pygame.draw.rect(self.screen, RED, menu.back_button, border_radius=5)
-        back_text = self.font.render("Back", True, WHITE)
+        # Botão Voltar
+        pygame.draw.rect(self.screen, GOLD, menu.back_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, menu.back_button, 4, border_radius=10)  # Contorno preto
+        back_text = self.custom_font.render("Voltar", True, BLACK)
         back_text_rect = back_text.get_rect(center=menu.back_button.center)
         self.screen.blit(back_text, back_text_rect)
     
-    def draw_game_over(self, winner_text):
-        game_over_text = self.font.render("Game Over!", True, WHITE)
-        result_text = self.font.render(winner_text, True, WHITE)
-        restart_text = self.small_font.render("Press R to restart or Q to quit", True, WHITE)
+    def draw_game_over(self, winner_text, is_host=True):
+        # Cria um painel semitransparente para o game over
+        panel_width, panel_height = 500, 250  # Aumentado para acomodar os botões
+        panel_rect = pygame.Rect(
+            SCREEN_WIDTH//2 - panel_width//2,
+            SCREEN_HEIGHT//2 - panel_height//2,
+            panel_width,
+            panel_height
+        )
         
-        self.screen.blit(game_over_text, (SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2 - 50))
-        self.screen.blit(result_text, (SCREEN_WIDTH // 2 - 100, SCREEN_HEIGHT // 2))
-        self.screen.blit(restart_text, (SCREEN_WIDTH // 2 - 150, SCREEN_HEIGHT // 2 + 50))
+        # Desenha o painel com transparência
+        s = pygame.Surface((panel_rect.width, panel_rect.height), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 192))  # Preto com 75% de transparência
+        self.screen.blit(s, panel_rect)
+        pygame.draw.rect(self.screen, GOLD, panel_rect, 4, border_radius=15)  # Borda dourada
+        
+        # Textos traduzidos e centralizados
+        game_over_text = self.title_font.render("Fim de Jogo!", True, WHITE)
+        result_text = self.custom_font.render(winner_text, True, WHITE)
+        
+        # Posicionamento dos textos
+        game_over_rect = game_over_text.get_rect(center=(SCREEN_WIDTH // 2, panel_rect.y + 50))
+        result_rect = result_text.get_rect(center=(SCREEN_WIDTH // 2, panel_rect.y + 100))
+        
+        # Renderiza os textos
+        self.screen.blit(game_over_text, game_over_rect)
+        self.screen.blit(result_text, result_rect)
+        
+        # Adiciona botões para o host
+        if is_host:
+            button_width = 200
+            button_height = 50
+            button_y = panel_rect.y + 160
+            button_margin = 20
+            
+            # Botão "Nova Partida"
+            self.new_game_button = pygame.Rect(
+                panel_rect.centerx - button_width - button_margin,
+                button_y,
+                button_width,
+                button_height
+            )
+            
+            # Botão "Sair da Mesa"
+            self.exit_room_button = pygame.Rect(
+                panel_rect.centerx + button_margin,
+                button_y,
+                button_width,
+                button_height
+            )
+            
+            # Desenha os botões
+            pygame.draw.rect(self.screen, GOLD, self.new_game_button, border_radius=8)
+            pygame.draw.rect(self.screen, BLACK, self.new_game_button, 4, border_radius=10)  # Contorno preto
+            new_game_text = self.custom_font.render("Nova Partida", True, BLACK)
+            new_game_rect = new_game_text.get_rect(center=self.new_game_button.center)
+            self.screen.blit(new_game_text, new_game_rect)
+            
+            pygame.draw.rect(self.screen, GOLD, self.exit_room_button, border_radius=8)
+            pygame.draw.rect(self.screen, BLACK, self.exit_room_button, 4, border_radius=10)  # Contorno preto
+            exit_room_text = self.custom_font.render("Sair da Mesa", True, BLACK)
+            exit_room_rect = exit_room_text.get_rect(center=self.exit_room_button.center)
+            self.screen.blit(exit_room_text, exit_room_rect)
+        else:
+            # Texto de instrução para os não-hosts
+            restart_text = self.small_custom_font.render("Aguardando o host iniciar nova partida ou pressione Q para sair", True, WHITE)
+            restart_rect = restart_text.get_rect(center=(SCREEN_WIDTH // 2, panel_rect.y + 170))
+            self.screen.blit(restart_text, restart_rect)
     
-    def draw_game(self, local_player, remote_player):
-        self.screen.fill(GREEN)
+    def draw_game(self, local_player, remote_player, is_local_turn):
+        # Usa a imagem de fundo em vez de preenchimento sólido
+        self.screen.blit(self.background_image, (0, 0))
+        
+        # Desenha as mãos dos jogadores
         self.draw_hand(local_player, True)
         self.draw_hand(remote_player, False)
-        self.draw_buttons() 
+        
+        # Desenha o indicador de turno
+        self.draw_turn_indicator(is_local_turn)
+        
+        # Só desenha os botões se for a vez do jogador local e ele ainda estiver jogando
+        if is_local_turn and local_player.status == "playing":
+            self.draw_buttons(local_player.status)
+    
+    def draw_turn_indicator(self, is_local_turn):
+        # Cria um painel semitransparente para indicar de quem é a vez
+        panel_width, panel_height = 400, 60
+        panel_rect = pygame.Rect(
+            SCREEN_WIDTH//2 - panel_width//2,
+            SCREEN_HEIGHT//2 - panel_height//2,
+            panel_width,
+            panel_height
+        )
+        
+        # Desenha o painel com transparência
+        s = pygame.Surface((panel_rect.width, panel_rect.height), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 160))  # Preto com 60% de transparência
+        pygame.draw.rect(s, (0, 0, 0, 160), pygame.Rect(0, 0, panel_width, panel_height), border_radius=15)
+        self.screen.blit(s, panel_rect)
+        
+        # Adiciona uma borda dourada
+        pygame.draw.rect(self.screen, GOLD, panel_rect, 2, border_radius=15)
+        
+        # Define o texto baseado em quem é a vez
+        if is_local_turn:
+            turn_text = self.custom_font.render("Sua vez! Escolha uma ação.", True, WHITE)
+        else:
+            turn_text = self.custom_font.render("Aguardando jogada do oponente...", True, WHITE)
+        
+        # Centraliza o texto
+        turn_rect = turn_text.get_rect(center=(SCREEN_WIDTH//2, SCREEN_HEIGHT//2))
+        self.screen.blit(turn_text, turn_rect) 

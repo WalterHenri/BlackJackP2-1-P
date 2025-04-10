@@ -8,6 +8,15 @@ class RoomMenu:
         self.font = font
         self.small_font = small_font
         
+        # Carrega a imagem de fundo
+        self.background_image = pygame.image.load("assets/capa2.png")
+        self.background_image = pygame.transform.scale(self.background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
+        
+        # Carrega a fonte personalizada
+        self.custom_font = pygame.font.Font("assets/font-jersey.ttf", 30)
+        self.small_custom_font = pygame.font.Font("assets/font-jersey.ttf", 20)
+        self.title_font = pygame.font.Font("assets/font-jersey.ttf", 40)
+        
         # Estado do menu de salas
         self.rooms = []  # Lista de salas disponíveis
         self.selected_room_index = -1
@@ -23,41 +32,47 @@ class RoomMenu:
     
     def create_ui_elements(self):
         """Cria os elementos de interface do usuário"""
-        # Botões para tela de lista de salas
-        self.refresh_button = pygame.Rect(
-            SCREEN_WIDTH - 150, 
-            70, 
-            120, 
-            40
-        )
-        
-        self.create_room_button = pygame.Rect(
-            SCREEN_WIDTH // 2 - 100,
-            SCREEN_HEIGHT - 150,
-            200,
-            50
-        )
-        
-        self.join_room_button = pygame.Rect(
-            SCREEN_WIDTH // 2 - 100,
-            SCREEN_HEIGHT - 80,
-            200,
-            50
-        )
-        
-        self.back_button = pygame.Rect(
-            50,
-            SCREEN_HEIGHT - 80,
-            120,
-            50
-        )
-        
         # Área de listagem de salas
         self.room_list_rect = pygame.Rect(
             SCREEN_WIDTH // 2 - 300,
             120,
             600,
             SCREEN_HEIGHT - 300
+        )
+        
+        # Botão atualizar alinhado com a borda direita da lista
+        self.refresh_button = pygame.Rect(
+            self.room_list_rect.x + self.room_list_rect.width - 120,  # Posicionado na borda direita da lista
+            self.room_list_rect.y - 50,  # 50px acima da lista
+            120, 
+            40
+        )
+        
+        button_y_bottom = SCREEN_HEIGHT - 80
+        self.back_button = pygame.Rect(
+            50,
+            button_y_bottom,
+            120,
+            50
+        )
+        
+        # Botões logo abaixo da lista de salas
+        button_width = 150
+        button_margin = 20
+        button_y = self.room_list_rect.y + self.room_list_rect.height + 20  
+        
+        self.create_room_button = pygame.Rect(
+            SCREEN_WIDTH // 2 - button_width - button_margin // 2,
+            button_y,
+            button_width,
+            50
+        )
+        
+        self.join_room_button = pygame.Rect(
+            SCREEN_WIDTH // 2 + button_margin // 2,
+            button_y,
+            button_width,
+            50
         )
         
         # Entrada de texto para nome da sala
@@ -78,10 +93,11 @@ class RoomMenu:
     
     def draw_room_list(self, title="Salas Disponíveis"):
         """Desenha a lista de salas disponíveis"""
-        self.screen.fill(GREEN)
+        # Usa a imagem de fundo em vez de preenchimento sólido
+        self.screen.blit(self.background_image, (0, 0))
         
         # Título
-        title_text = self.font.render(title, True, WHITE)
+        title_text = self.title_font.render(title, True, WHITE)
         title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 50))
         self.screen.blit(title_text, title_rect)
         
@@ -90,14 +106,15 @@ class RoomMenu:
         pygame.draw.rect(self.screen, BLACK, self.room_list_rect, 2, border_radius=5)
         
         # Botão de atualizar
-        pygame.draw.rect(self.screen, BLUE, self.refresh_button, border_radius=5)
-        refresh_text = self.small_font.render("Atualizar", True, WHITE)
+        pygame.draw.rect(self.screen, GOLD, self.refresh_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, self.refresh_button, 4, border_radius=10)  # Contorno preto
+        refresh_text = self.small_custom_font.render("Atualizar", True, BLACK)
         refresh_rect = refresh_text.get_rect(center=self.refresh_button.center)
         self.screen.blit(refresh_text, refresh_rect)
         
         # Desenhar salas
         if not self.rooms:
-            no_rooms_text = self.font.render("Nenhuma sala disponível", True, WHITE)
+            no_rooms_text = self.custom_font.render("Nenhuma sala disponível", True, WHITE)
             no_rooms_rect = no_rooms_text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50))
             self.screen.blit(no_rooms_text, no_rooms_rect)
         else:
@@ -125,52 +142,55 @@ class RoomMenu:
                 room_id = room.get('id', '')
                 room_host = room.get('host', 'Desconhecido')
                 
-                name_text = self.font.render(room_name, True, BLACK)
-                id_text = self.small_font.render(f"ID: {room_id}", True, BLACK)
-                host_text = self.small_font.render(f"Host: {room_host}", True, BLACK)
+                name_text = self.custom_font.render(room_name, True, BLACK)
+                id_text = self.small_custom_font.render(f"ID: {room_id}", True, BLACK)
+                host_text = self.small_custom_font.render(f"Host: {room_host}", True, BLACK)
                 
                 self.screen.blit(name_text, (room_rect.x + 10, room_rect.y + 5))
                 self.screen.blit(id_text, (room_rect.x + 10, room_rect.y + 30))
                 self.screen.blit(host_text, (room_rect.x + 200, room_rect.y + 30))
         
         # Botão para criar sala
-        pygame.draw.rect(self.screen, GREEN, self.create_room_button, border_radius=5)
-        pygame.draw.rect(self.screen, BLACK, self.create_room_button, 2, border_radius=5)
-        create_text = self.font.render("Criar Sala", True, WHITE)
+        pygame.draw.rect(self.screen, GOLD, self.create_room_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, self.create_room_button, 4, border_radius=10)  # Contorno preto
+        create_text = self.custom_font.render("Criar Sala", True, BLACK)
         create_rect = create_text.get_rect(center=self.create_room_button.center)
         self.screen.blit(create_text, create_rect)
         
         # Botão para entrar na sala
-        button_color = BLUE if self.selected_room_index >= 0 else GRAY
-        pygame.draw.rect(self.screen, button_color, self.join_room_button, border_radius=5)
-        join_text = self.font.render("Entrar", True, WHITE)
+        button_color = GOLD if self.selected_room_index >= 0 else GRAY
+        pygame.draw.rect(self.screen, button_color, self.join_room_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, self.join_room_button, 4, border_radius=10)  # Contorno preto
+        join_text = self.custom_font.render("Entrar", True, BLACK)
         join_rect = join_text.get_rect(center=self.join_room_button.center)
         self.screen.blit(join_text, join_rect)
         
         # Botão de voltar
-        pygame.draw.rect(self.screen, RED, self.back_button, border_radius=5)
-        back_text = self.font.render("Voltar", True, WHITE)
+        pygame.draw.rect(self.screen, GOLD, self.back_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, self.back_button, 4, border_radius=10)  # Contorno preto
+        back_text = self.custom_font.render("Voltar", True, BLACK)
         back_rect = back_text.get_rect(center=self.back_button.center)
         self.screen.blit(back_text, back_rect)
     
     def draw_create_room(self):
         """Desenha a tela de criação de sala"""
-        self.screen.fill(GREEN)
+        # Usa a imagem de fundo em vez de preenchimento sólido
+        self.screen.blit(self.background_image, (0, 0))
         
         # Título
-        title_text = self.font.render("Criar Nova Sala", True, WHITE)
+        title_text = self.title_font.render("Criar Nova Sala", True, WHITE)
         title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 100))
         self.screen.blit(title_text, title_rect)
         
         # Campo de entrada do nome da sala
-        pygame.draw.rect(self.screen, WHITE, self.room_name_rect, border_radius=5)
+        pygame.draw.rect(self.screen, WHITE, self.room_name_rect, border_radius=8)
         if self.room_name_active:
-            pygame.draw.rect(self.screen, LIGHT_BLUE, self.room_name_rect, 3, border_radius=5)
+            pygame.draw.rect(self.screen, LIGHT_BLUE, self.room_name_rect, 4, border_radius=10)
         else:
-            pygame.draw.rect(self.screen, BLACK, self.room_name_rect, 3, border_radius=5)
+            pygame.draw.rect(self.screen, BLACK, self.room_name_rect, 4, border_radius=10)
         
         # Texto do campo de entrada
-        room_name_text = self.font.render(
+        room_name_text = self.custom_font.render(
             self.room_name_input if self.room_name_input else "Digite o nome da sala",
             True,
             BLACK if self.room_name_input else (150, 150, 150)
@@ -179,15 +199,17 @@ class RoomMenu:
         self.screen.blit(room_name_text, room_name_rect)
         
         # Botão de confirmar
-        button_color = BLUE if self.room_name_input else GRAY
-        pygame.draw.rect(self.screen, button_color, self.confirm_create_button, border_radius=5)
-        confirm_text = self.font.render("Criar", True, WHITE)
+        button_color = GOLD if self.room_name_input else GRAY
+        pygame.draw.rect(self.screen, button_color, self.confirm_create_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, self.confirm_create_button, 4, border_radius=10)  # Contorno preto
+        confirm_text = self.custom_font.render("Criar", True, BLACK)
         confirm_rect = confirm_text.get_rect(center=self.confirm_create_button.center)
         self.screen.blit(confirm_text, confirm_rect)
         
         # Botão de voltar
-        pygame.draw.rect(self.screen, RED, self.back_button, border_radius=5)
-        back_text = self.font.render("Voltar", True, WHITE)
+        pygame.draw.rect(self.screen, GOLD, self.back_button, border_radius=8)
+        pygame.draw.rect(self.screen, BLACK, self.back_button, 4, border_radius=10)  # Contorno preto
+        back_text = self.custom_font.render("Voltar", True, BLACK)
         back_rect = back_text.get_rect(center=self.back_button.center)
         self.screen.blit(back_text, back_rect)
     
