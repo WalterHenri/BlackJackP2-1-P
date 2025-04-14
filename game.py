@@ -55,6 +55,9 @@ class BlackjackGame:
         self.local_player = Player("You")
         self.remote_player = Player("Opponent")
         
+        # Reseta o estado do jogo no renderer
+        self.renderer.reset_game_state()
+        
         # Networking setup
         self.network.setup_network(is_host, peer_address)
         
@@ -92,8 +95,10 @@ class BlackjackGame:
             self.remote_player.status = message.get('status', 'playing')
             self.remote_player.calculate_score()
             
-            # Check if game is over
-            if self.local_player.status != "playing" and self.remote_player.status != "playing":
+            # Check if game is over - finaliza a partida imediatamente se o jogador remoto estourar
+            if self.remote_player.status == "busted":
+                self.game_state = GameState.GAME_OVER
+            elif self.local_player.status != "playing" and self.remote_player.status != "playing":
                 self.game_state = GameState.GAME_OVER
         
         elif message.get('type') == 'restart_game':
@@ -102,7 +107,13 @@ class BlackjackGame:
             self.deck = create_sprite_deck()
             self.local_player = Player("You")
             self.remote_player = Player("Opponent")
+            
+            # Reseta o estado do jogo no renderer
+            self.renderer.reset_game_state()
+            
+            # Atualiza o estado do jogo
             self.game_state = GameState.PLAYING
+            
             # Não precisamos distribuir as cartas iniciais aqui, pois o host fará isso e enviará via game_state
 
         elif message.get('type') == 'host_left':
@@ -150,10 +161,9 @@ class BlackjackGame:
             self.network.send_message({'type': 'hit'})
             self.network.send_game_state(self.local_player)
             
-            # Check if busted
+            # Check if busted - finaliza a partida imediatamente se o jogador local estourar
             if self.local_player.status == "busted":
-                if self.remote_player.status != "playing":
-                    self.game_state = GameState.GAME_OVER
+                self.game_state = GameState.GAME_OVER
     
     def stand(self):
         if self.game_state == GameState.PLAYING and self.local_player.status == "playing":
@@ -182,6 +192,11 @@ class BlackjackGame:
         self.deck = create_sprite_deck()
         self.local_player = Player("You")
         self.remote_player = Player("Opponent")
+        
+        # Reseta o estado do jogo no renderer
+        self.renderer.reset_game_state()
+        
+        # Atualiza o estado do jogo
         self.game_state = GameState.PLAYING
         
         # Envia mensagem para o oponente informando que o jogo foi reiniciado

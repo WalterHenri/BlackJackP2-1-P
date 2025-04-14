@@ -9,6 +9,10 @@ class GameRenderer:
         self.font = font
         self.small_font = small_font
         
+        # Estado do jogo
+        self.game_state = "PLAYING"
+        self.game_over = False
+        
         # Carrega a imagem de fundo
         self.background_image = pygame.image.load("assets/capa2.png")
         self.background_image = pygame.transform.scale(self.background_image, (SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -104,7 +108,29 @@ class GameRenderer:
         card_spacing = int(self.card_sprites.card_width * self.card_scale * 0.5)
         
         for i, card in enumerate(player.hand):
-            self.draw_card(card, (50 + i * card_spacing, y_pos))
+            # Se for o oponente e o jogo não estiver terminado, mostra apenas o fundo da carta
+            if not is_local and self.game_state == "PLAYING":
+                # Obtém a sprite do verso da carta
+                back_sprite = self.card_sprites.get_back_sprite()
+                
+                if back_sprite:
+                    # Calcula o novo tamanho da carta
+                    scaled_width = int(self.card_sprites.card_width * self.card_scale)
+                    scaled_height = int(self.card_sprites.card_height * self.card_scale)
+                    
+                    # Redimensiona a sprite
+                    scaled_sprite = pygame.transform.scale(back_sprite, (scaled_width, scaled_height))
+                    
+                    # Desenha o verso da carta
+                    self.screen.blit(scaled_sprite, (50 + i * card_spacing, y_pos))
+                else:
+                    # Fallback para desenho manual se a sprite não for encontrada
+                    rect = pygame.Rect(50 + i * card_spacing, y_pos, CARD_WIDTH, CARD_HEIGHT)
+                    pygame.draw.rect(self.screen, BLUE, rect)
+                    pygame.draw.rect(self.screen, BLACK, rect, 2)
+            else:
+                # Desenha a carta normalmente (para o jogador local ou quando o jogo terminar)
+                self.draw_card(card, (50 + i * card_spacing, y_pos))
     
     def draw_buttons(self, player_status):
         # Só mostra os botões se o jogador ainda estiver jogando
@@ -148,6 +174,10 @@ class GameRenderer:
         self.screen.blit(back_text, back_text_rect)
     
     def draw_game_over(self, winner_text, is_host=True):
+        # Atualiza o estado do jogo
+        self.game_state = "GAME_OVER"
+        self.game_over = True
+        
         # Cria um painel semitransparente para o game over
         panel_width, panel_height = 500, 250  # Aumentado para acomodar os botões
         panel_rect = pygame.Rect(
@@ -216,9 +246,20 @@ class GameRenderer:
             restart_rect = restart_text.get_rect(center=(SCREEN_WIDTH // 2, panel_rect.y + 170))
             self.screen.blit(restart_text, restart_rect)
     
+    def reset_game_state(self):
+        """Reseta o estado do jogo para o início de uma nova partida"""
+        self.game_state = "PLAYING"
+        self.game_over = False
+    
     def draw_game(self, local_player, remote_player):
         # Usa a imagem de fundo em vez de preenchimento sólido
         self.screen.blit(self.background_image, (0, 0))
+        
+        # Atualiza o estado do jogo
+        # Se o jogo estiver em PLAYING, garantimos que o estado do renderer também esteja em PLAYING
+        if self.game_state != "GAME_OVER":
+            self.game_state = "PLAYING"
+            self.game_over = False
         
         self.draw_hand(local_player, True)
         self.draw_hand(remote_player, False)
