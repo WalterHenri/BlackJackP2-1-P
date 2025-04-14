@@ -78,7 +78,13 @@ class GameRenderer:
         # Posicionamento vertical melhorado com maior distanciamento
         y_pos = SCREEN_HEIGHT - 280 if is_local else 80
         label = "Sua mão:" if is_local else "Oponente:"
-        score_text = f"Pontuação: {player.score}"
+        
+        # Só mostra a pontuação do oponente se o jogo estiver terminado
+        if is_local or self.game_state == "GAME_OVER":
+            score_text = f"Pontuação: {player.score}"
+        else:
+            score_text = "Pontuação: ???"
+            
         status_map = {"playing": "Jogando", "standing": "Parou", "busted": "Estourou"}
         status_text = f"Status: {status_map.get(player.status, player.status)}"
         
