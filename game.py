@@ -116,7 +116,11 @@ class BlackjackGame:
             # Atualiza o estado do jogo
             self.game_state = GameState.PLAYING
             
-            # Não precisamos distribuir as cartas iniciais aqui, pois o host fará isso e enviará via game_state
+            # Distribui as cartas iniciais para o jogador local
+            self.deal_initial_cards()
+            
+            # Não precisamos distribuir as cartas para o jogador remoto,
+            # pois o host fará isso e enviará via game_state
 
         elif message.get('type') == 'host_left':
             # O host saiu da mesa, então também devemos voltar para a lista de salas
