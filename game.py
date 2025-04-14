@@ -71,7 +71,9 @@ class BlackjackGame:
         # Deal two cards to each player
         for _ in range(2):
             self.local_player.hit(self.deck)
-            self.remote_player.hit(self.deck)
+            # Apenas o host distribui cartas para o jogador remoto
+            if hasattr(self.network, 'is_host') and self.network.is_host:
+                self.remote_player.hit(self.deck)
         
         # Send initial state to the other player
         self.network.send_game_state(self.local_player)

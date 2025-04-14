@@ -45,6 +45,9 @@ class NetworkManager:
                     
                     # Start the game
                     self.game.game_state = GameState.PLAYING
+                    
+                    # Distribuir as cartas iniciais para o cliente também
+                    self.game.deal_initial_cards()
                 except Exception as e:
                     print(f"Failed to connect: {e}")
                     self.game.game_state = GameState.MENU
