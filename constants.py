@@ -17,7 +17,7 @@ GRAY = (128, 128, 128)
 DARK_GREEN = (0, 100, 0)
 
 # Room server configuration
-ROOM_SERVER_HOST = 'localhost'
+ROOM_SERVER_HOST = '69.62.103.94'
 ROOM_SERVER_PORT = 5001
 
 class GameState(Enum):

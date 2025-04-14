@@ -62,8 +62,7 @@ class SoundManager:
             
             # Armazena a música atual
             self.current_music = next_music
-            
-            print(f"Tocando: {os.path.basename(next_music)}")
+
     
     def stop_music(self):
         """
