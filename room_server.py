@@ -17,6 +17,10 @@ class RoomServer:
         self.clients = []  # Lista de sockets de clientes conectados
         self.running = False
         self.lock = threading.Lock()  # Para acesso seguro à lista de salas
+        
+        # Dicionários para gerenciar conexões de relay
+        self.client_rooms = {}  # {client_socket: room_id}
+        self.room_connections = {}  # {room_id: {'host': host_socket, 'client': client_socket}}
     
     def start(self):
         """Inicia o servidor de salas"""
@@ -95,9 +99,15 @@ class RoomServer:
             print(f"Erro na comunicação com {addr}: {e}")
         
         finally:
-            # Remover cliente da lista
+            # Remover cliente da lista e limpar associações de relay
             if client_socket in self.clients:
                 self.clients.remove(client_socket)
+            
+            # Verificar se o cliente estava em alguma sala e notificar o outro jogador
+            if client_socket in self.client_rooms:
+                room_id = self.client_rooms[client_socket]
+                self.notify_disconnect(client_socket, room_id)
+                del self.client_rooms[client_socket]
             
             # Fechar socket
             try:
@@ -111,6 +121,7 @@ class RoomServer:
         """Processa mensagens recebidas de clientes"""
         command = message.get('command')
         
+        # Comandos de gerenciamento de salas
         if command == 'list_rooms':
             self.send_room_list(client_socket)
         
@@ -119,11 +130,20 @@ class RoomServer:
             host_ip = message.get('host_ip', addr[0])
             room_id = self.create_room(room_name, host_ip)
             
+            # Associar o socket do host à sala para relay
+            self.client_rooms[client_socket] = room_id
+            with self.lock:
+                if room_id not in self.room_connections:
+                    self.room_connections[room_id] = {'host': client_socket, 'client': None}
+                else:
+                    self.room_connections[room_id]['host'] = client_socket
+            
             response = {
                 'command': 'room_created',
                 'room_id': room_id,
                 'room_name': room_name,
-                'host_ip': host_ip
+                'host_ip': host_ip,
+                'use_relay': True  # Indicar que usará relay
             }
             self.send_message(client_socket, response)
         
@@ -131,11 +151,26 @@ class RoomServer:
             room_id = message.get('room_id')
             with self.lock:
                 if room_id in self.rooms:
+                    # Associar o socket do cliente à sala para relay
+                    self.client_rooms[client_socket] = room_id
+                    
+                    # Configurar o relay entre host e cliente
+                    if room_id in self.room_connections:
+                        self.room_connections[room_id]['client'] = client_socket
+                        
+                        # Notificar o host que um cliente se conectou
+                        if self.room_connections[room_id]['host']:
+                            self.send_message(self.room_connections[room_id]['host'], {
+                                'command': 'client_connected',
+                                'room_id': room_id
+                            })
+                    
                     response = {
                         'command': 'join_success',
                         'room_id': room_id,
                         'room_name': self.rooms[room_id]['name'],
-                        'host_ip': self.rooms[room_id]['host']
+                        'host_ip': self.rooms[room_id]['host'],
+                        'use_relay': True  # Indicar que usará relay
                     }
                 else:
                     response = {
@@ -159,10 +194,93 @@ class RoomServer:
             with self.lock:
                 if room_id in self.rooms:
                     del self.rooms[room_id]
+                    # Limpar referências de relay para esta sala
+                    if room_id in self.room_connections:
+                        del self.room_connections[room_id]
                     response = {'command': 'room_deleted'}
                 else:
                     response = {'command': 'room_not_found'}
             self.send_message(client_socket, response)
+            
+        # Comandos de relay
+        elif command == 'relay_message':
+            # Retransmitir a mensagem para o outro jogador na sala
+            if client_socket in self.client_rooms:
+                room_id = self.client_rooms[client_socket]
+                relay_data = message.get('data', {})
+                
+                # Adicionar info de relay para o receptor saber se veio do host ou do cliente
+                relay_data['_relay_from'] = 'host' if self.room_connections.get(room_id, {}).get('host') == client_socket else 'client'
+                
+                self.relay_message_to_room(client_socket, room_id, relay_data)
+                
+                # Confirmação para quem enviou
+                response = {'command': 'relay_sent'}
+                self.send_message(client_socket, response)
+            else:
+                response = {'command': 'relay_failed', 'reason': 'Not in a room'}
+                self.send_message(client_socket, response)
+    
+    def relay_message_to_room(self, sender_socket, room_id, message_data):
+        """Retransmite uma mensagem para o outro jogador na sala"""
+        with self.lock:
+            if room_id in self.room_connections:
+                host_socket = self.room_connections[room_id]['host']
+                client_socket = self.room_connections[room_id]['client']
+                
+                # Determinar qual socket é o destinatário
+                if sender_socket == host_socket and client_socket:
+                    recipient = client_socket
+                elif sender_socket == client_socket and host_socket:
+                    recipient = host_socket
+                else:
+                    return  # Não há destinatário válido
+                
+                # Enviar mensagem relay para o destinatário
+                relay_message = {
+                    'command': 'relay_received',
+                    'data': message_data
+                }
+                self.send_message(recipient, relay_message)
+    
+    def notify_disconnect(self, disconnected_socket, room_id):
+        """Notifica o outro jogador na sala que um jogador desconectou"""
+        with self.lock:
+            if room_id in self.room_connections:
+                host_socket = self.room_connections[room_id]['host']
+                client_socket = self.room_connections[room_id]['client']
+                
+                # Determinar qual socket está ativo e notificá-lo
+                if disconnected_socket == host_socket and client_socket:
+                    # Host desconectou, notificar cliente
+                    self.send_message(client_socket, {
+                        'command': 'relay_received',
+                        'data': {
+                            'type': 'host_left',
+                            '_relay_from': 'host'
+                        }
+                    })
+                elif disconnected_socket == client_socket and host_socket:
+                    # Cliente desconectou, notificar host
+                    self.send_message(host_socket, {
+                        'command': 'relay_received',
+                        'data': {
+                            'type': 'client_left',
+                            '_relay_from': 'client'
+                        }
+                    })
+                
+                # Remover o socket que desconectou
+                if disconnected_socket == host_socket:
+                    self.room_connections[room_id]['host'] = None
+                elif disconnected_socket == client_socket:
+                    self.room_connections[room_id]['client'] = None
+                
+                # Se ambos desconectaram, limpar a sala completamente
+                if self.room_connections[room_id]['host'] is None and self.room_connections[room_id]['client'] is None:
+                    if room_id in self.rooms:
+                        del self.rooms[room_id]
+                    del self.room_connections[room_id]
     
     def send_message(self, client_socket, message):
         """Envia mensagem para um cliente"""
@@ -220,6 +338,23 @@ class RoomServer:
                 
                 # Remover salas inativas
                 for room_id in rooms_to_remove:
+                    if room_id in self.room_connections:
+                        # Notificar os jogadores que a sala está sendo fechada
+                        host_socket = self.room_connections[room_id].get('host')
+                        client_socket = self.room_connections[room_id].get('client')
+                        
+                        if host_socket:
+                            self.send_message(host_socket, {
+                                'command': 'room_expired'
+                            })
+                        
+                        if client_socket:
+                            self.send_message(client_socket, {
+                                'command': 'room_expired'
+                            })
+                        
+                        del self.room_connections[room_id]
+                    
                     del self.rooms[room_id]
                     print(f"Sala removida por inatividade: {room_id}")
 

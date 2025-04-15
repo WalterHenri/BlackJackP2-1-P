@@ -49,7 +49,7 @@ class BlackjackGame:
         except:
             print("Não foi possível conectar ao servidor de salas")
     
-    def initialize_game(self, is_host, peer_address=None):
+    def initialize_game(self, is_host, peer_address=None, room_id=None, use_relay=False):
         # Usa o SpriteDeck em vez do Deck padrão
         self.deck = create_sprite_deck()
         self.local_player = Player("You")
@@ -58,11 +58,14 @@ class BlackjackGame:
         # Reseta o estado do jogo no renderer
         self.renderer.reset_game_state()
         
-        # Networking setup
-        self.network.setup_network(is_host, peer_address)
+        # Networking setup - agora com suporte a relay
+        self.network.setup_network(is_host, peer_address, room_id, use_relay)
         
         if is_host:
-            self.game_state = GameState.WAITING
+            if use_relay:
+                self.game_state = GameState.WAITING
+            else:
+                self.game_state = GameState.WAITING
         else:
             # Client immediately tries to connect
             self.game_state = GameState.PLAYING
@@ -139,15 +142,25 @@ class BlackjackGame:
         
         elif command == 'room_created':
             # Sala criada com sucesso, guardar o ID
-            self.room_client.set_room_id(message.get('room_id'))
+            room_id = message.get('room_id')
+            self.room_client.set_room_id(room_id)
+            
+            # Verificar se deve usar relay
+            use_relay = message.get('use_relay', True)
             
             # Iniciar jogo como host
-            self.initialize_game(is_host=True)
+            self.initialize_game(is_host=True, room_id=room_id, use_relay=use_relay)
         
         elif command == 'join_success':
-            # Conseguiu entrar na sala, iniciar jogo como cliente
+            # Conseguiu entrar na sala
+            room_id = message.get('room_id')
             host_ip = message.get('host_ip')
-            self.initialize_game(is_host=False, peer_address=host_ip)
+            
+            # Verificar se deve usar relay
+            use_relay = message.get('use_relay', True)
+            
+            # Iniciar jogo como cliente
+            self.initialize_game(is_host=False, peer_address=host_ip, room_id=room_id, use_relay=use_relay)
         
         elif command == 'join_failed':
             # Falha ao entrar na sala, mostrar mensagem de erro
@@ -156,6 +169,13 @@ class BlackjackGame:
             self.game_state = GameState.ROOM_LIST
             # Atualizar lista de salas
             self.room_client.list_rooms()
+        
+        elif command == 'relay_data':
+            # Dados recebidos através do servidor de relay
+            relay_data = message.get('data', {})
+            
+            # Processar os dados recebidos via relay
+            self.network.handle_relay_message(relay_data)
     
     def hit(self):
         if self.game_state == GameState.PLAYING and self.local_player.status == "playing":
@@ -242,9 +262,8 @@ class BlackjackGame:
         if action == "confirm_create":
             room_name = self.room_menu.room_name_input
             if room_name:
-                # Usar a função de detecção de IP local para pegar um IP melhor
-                host_ip = self.network.get_local_ip()
-                print(f"Criando sala com IP: {host_ip}")
+                # Usar o IP atual como o IP do host
+                host_ip = socket.gethostbyname(socket.gethostname())
                 self.room_client.create_room(room_name, host_ip)
         
         elif action == "back":

@@ -14,15 +14,13 @@ class RoomClient:
         self.is_host = False
         self.running = False
         self.callback = None
+        self.use_relay = True  # Por padrão, usar relay
         
     def connect(self):
         """Conecta ao servidor de salas"""
         try:
-            print(f"Tentando conectar ao servidor de salas: {self.server_host}:{self.server_port}")
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.settimeout(10)  # Timeout de 10 segundos para conexão
             self.socket.connect((self.server_host, self.server_port))
-            self.socket.settimeout(30)  # Timeout mais longo após conectar
             self.connected = True
             self.running = True
             
@@ -31,12 +29,7 @@ class RoomClient:
             self.receive_thread.daemon = True
             self.receive_thread.start()
             
-            print("Conectado ao servidor de salas com sucesso")
             return True
-        except socket.timeout:
-            print(f"Timeout ao tentar conectar ao servidor de salas: {self.server_host}")
-            self.connected = False
-            return False
         except Exception as e:
             print(f"Erro ao conectar ao servidor de salas: {e}")
             self.connected = False
@@ -51,10 +44,6 @@ class RoomClient:
         
         if self.socket:
             try:
-                self.socket.shutdown(socket.SHUT_RDWR)
-            except:
-                pass
-            try:
                 self.socket.close()
             except:
                 pass
@@ -62,9 +51,6 @@ class RoomClient:
         self.connected = False
         self.room_id = None
         self.is_host = False
-        
-        # Esperar threads terminarem
-        time.sleep(0.3)
     
     def set_callback(self, callback):
         """Define uma função de callback para processar mensagens recebidas"""
@@ -76,62 +62,72 @@ class RoomClient:
         
         while self.running and self.connected:
             try:
-                try:
-                    data = self.socket.recv(1024)
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    print(f"Erro ao receber dados: {e}")
-                    break
-                    
+                data = self.socket.recv(1024)
                 if not data:
-                    print("Conexão com o servidor de salas fechada")
                     break
                 
-                # Adicionar dados ao buffer
+                # Adicionar ao buffer e processar mensagens
                 try:
                     buffer += data.decode('utf-8')
+                    
+                    # Processar todas as mensagens no buffer
+                    while buffer:
+                        try:
+                            message = json.loads(buffer)
+                            self.process_message(message)
+                            buffer = ""  # Limpar buffer
+                            break
+                        except json.JSONDecodeError as e:
+                            if "Extra data" in str(e):
+                                # Dados extras - processar o primeiro JSON e manter o resto
+                                pos = e.pos
+                                try:
+                                    first_json = buffer[:pos]
+                                    message = json.loads(first_json)
+                                    self.process_message(message)
+                                    buffer = buffer[pos:]  # Manter o resto para próximo ciclo
+                                except:
+                                    print("Erro processando JSON parcial, descartando buffer")
+                                    buffer = ""
+                            elif "Expecting value" in str(e) and len(buffer) < 1024:
+                                # JSON incompleto, aguardar mais dados
+                                break
+                            else:
+                                # JSON inválido, descartar
+                                print(f"JSON inválido no buffer: {e}")
+                                buffer = ""
+                                break
                 except UnicodeDecodeError:
                     print("Erro ao decodificar dados")
                     buffer = ""
-                    continue
-                
-                # Processar mensagens no buffer
-                try:
-                    message = json.loads(buffer)
-                    buffer = ""
-                    
-                    # Processar mensagem
-                    if self.callback:
-                        self.callback(message)
-                except json.JSONDecodeError as e:
-                    if "Extra data" in str(e):
-                        # Processar primeira mensagem completa
-                        pos = e.pos
-                        try:
-                            first_json = buffer[:pos]
-                            message = json.loads(first_json)
-                            if self.callback:
-                                self.callback(message)
-                            buffer = buffer[pos:]
-                        except:
-                            buffer = ""
-                    elif len(buffer) > 4096:
-                        # Buffer muito grande, provavelmente corrompido
-                        buffer = ""
-                    # Se for outro erro, provavelmente é um JSON incompleto
-                    # então mantemos no buffer
-                except Exception as e:
-                    print(f"Erro ao processar mensagem: {e}")
-                    buffer = ""
                 
             except Exception as e:
-                print(f"Erro na thread de recebimento: {e}")
+                print(f"Erro ao receber mensagem: {e}")
                 break
         
         if self.running:
             print("Conexão com o servidor de salas perdida")
             self.connected = False
+    
+    def process_message(self, message):
+        """Processa mensagem recebida do servidor"""
+        command = message.get('command')
+        
+        # Processar mensagens de relay
+        if command == 'relay_received':
+            relay_data = message.get('data', {})
+            
+            # Repassar para o callback (que será o método na classe game)
+            if self.callback:
+                self.callback({
+                    'command': 'relay_data',
+                    'data': relay_data
+                })
+            return
+        
+        # Para outras mensagens, repassar para o callback geral
+        if self.callback:
+            self.callback(message)
     
     def send_message(self, message):
         """Envia uma mensagem para o servidor de salas"""
@@ -140,8 +136,7 @@ class RoomClient:
             return False
         
         try:
-            data = json.dumps(message).encode('utf-8')
-            self.socket.sendall(data)
+            self.socket.sendall(json.dumps(message).encode('utf-8'))
             return True
         except Exception as e:
             print(f"Erro ao enviar mensagem: {e}")
