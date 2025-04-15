@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import time
+import urllib.request
 from constants import GameState
 from card import Card
 
@@ -16,6 +17,37 @@ class NetworkManager:
         self.running = True
         self.connection_thread = None
         self.receive_thread = None
+        self.port = 5000  # Porta padrão
+    
+    def get_local_ip(self):
+        """Tenta obter um IP local que seja acessível na rede"""
+        try:
+            # Tenta conectar a um serviço externo para determinar a interface de rede ativa
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            print(f"IP local detectado: {local_ip}")
+            return local_ip
+        except:
+            # Fallback para o hostname local
+            try:
+                local_ip = socket.gethostbyname(socket.gethostname())
+                print(f"IP do hostname: {local_ip}")
+                return local_ip
+            except:
+                print("Não foi possível determinar o IP local, usando 127.0.0.1")
+                return "127.0.0.1"
+    
+    def get_public_ip(self):
+        """Tenta obter o IP público (só funciona se tiver acesso à internet)"""
+        try:
+            public_ip = urllib.request.urlopen('https://api.ipify.org').read().decode('utf8')
+            print(f"IP público detectado: {public_ip}")
+            return public_ip
+        except:
+            print("Não foi possível obter o IP público")
+            return None
     
     def setup_network(self, is_host, peer_address=None):
         # Garantir que não há conexões anteriores ativas
@@ -32,14 +64,29 @@ class NetworkManager:
             
             # Definir timeout para operações de socket
             if is_host:
-                self.socket.settimeout(60)  # Timeout mais longo para hospedagem
+                # Sem timeout para o host durante o accept
+                self.socket.settimeout(None)
             else:
-                self.socket.settimeout(10)  # Timeout curto para conexão cliente
+                # Timeout mais curto para o cliente durante a conexão
+                self.socket.settimeout(15)  # Aumentado para 15 segundos
             
             if is_host:
                 try:
-                    self.socket.bind(('0.0.0.0', 5000))
+                    # Bind em todas as interfaces
+                    print(f"Tentando hospedar na porta {self.port}...")
+                    self.socket.bind(('0.0.0.0', self.port))
                     self.socket.listen(1)
+                    
+                    # Informar o IP local (para conexões na mesma rede)
+                    local_ip = self.get_local_ip()
+                    print(f"Host pronto. Outros jogadores na mesma rede podem se conectar usando: {local_ip}:{self.port}")
+                    
+                    # Tentar informar o IP público (para conexões pela internet)
+                    public_ip = self.get_public_ip()
+                    if public_ip:
+                        print(f"Se seu roteador estiver configurado, jogadores de fora da rede podem usar: {public_ip}:{self.port}")
+                        print("IMPORTANTE: É necessário abrir/encaminhar a porta no roteador para conexões externas.")
+                    
                     print("Waiting for opponent to connect...")
                     
                     # Iniciar thread de aceitação de conexão
@@ -53,8 +100,16 @@ class NetworkManager:
             else:
                 if peer_address:
                     try:
-                        print(f"Tentando conectar ao host: {peer_address}")
-                        self.socket.connect((peer_address, 5000))
+                        print(f"Tentando conectar ao host: {peer_address}:{self.port}")
+                        # Mostrar mais informações para diagnóstico
+                        try:
+                            print(f"Resolução de nome: {socket.gethostbyname(peer_address)}")
+                        except:
+                            print(f"Não foi possível resolver o nome do host: {peer_address}")
+                        
+                        # Tentar conexão com timeout estendido
+                        self.socket.settimeout(15)  # 15 segundos para timeout
+                        self.socket.connect((peer_address, self.port))
                         self.peer_socket = self.socket
                         self.is_connected = True
                         print("Connected to host!")
@@ -65,6 +120,9 @@ class NetworkManager:
                             self.send_message(handshake_msg)
                         except Exception as e:
                             print(f"Erro no handshake: {e}")
+                        
+                        # Configurar timeout mais longo para operações de jogo
+                        self.socket.settimeout(30)
                         
                         # Start receiving messages
                         self.receive_thread = threading.Thread(target=self.receive_messages)
@@ -77,11 +135,15 @@ class NetworkManager:
                         # Distribuir as cartas iniciais para o cliente também
                         self.game.deal_initial_cards()
                     except socket.timeout:
-                        print("Connection attempt timed out")
+                        print("Connection attempt timed out. Verifique:")
+                        print("1. O servidor está rodando e acessível")
+                        print("2. O IP está correto")
+                        print("3. A porta está aberta no firewall do servidor")
+                        print("4. Se estiver conectando pela internet, o encaminhamento de porta está configurado no roteador")
                         self.close_connection()
                         self.game.game_state = GameState.MENU
                     except ConnectionRefusedError:
-                        print("Connection refused by the host")
+                        print("Connection refused by the host. O servidor pode não estar aceitando conexões.")
                         self.close_connection()
                         self.game.game_state = GameState.MENU
                     except Exception as e:
@@ -103,9 +165,6 @@ class NetworkManager:
             # Verificar se o socket ainda é válido
             if not self.running or not self.socket:
                 return
-                
-            # Configurar o socket para aceitar conexões
-            self.socket.settimeout(None)  # sem timeout para accept()
             
             # Tentar aceitar conexão
             print("Aguardando conexão do cliente...")
@@ -120,13 +179,14 @@ class NetworkManager:
                 return
                 
             # Configurar o socket do cliente
-            client_socket.settimeout(5.0)
+            client_socket.settimeout(30.0)  # Timeout mais longo para o jogo
             self.peer_socket = client_socket
             self.is_connected = True
             print(f"Client connected from {addr}")
             
             # Aguardar mensagem de handshake antes de iniciar o jogo
             try:
+                client_socket.settimeout(5.0)  # Timeout curto para o handshake
                 data = client_socket.recv(1024)
                 if data:
                     handshake = json.loads(data.decode('utf-8'))
@@ -134,8 +194,10 @@ class NetworkManager:
                         print("Handshake recebido com sucesso")
                     else:
                         print("Handshake inválido, mas continuando")
+                client_socket.settimeout(30.0)  # Voltar para timeout longo
             except Exception as e:
                 print(f"Erro no handshake, mas continuando: {e}")
+                client_socket.settimeout(30.0)  # Garantir timeout longo mesmo com erro
             
             # Iniciar o jogo
             self.game.game_state = GameState.PLAYING

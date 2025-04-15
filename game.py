@@ -242,8 +242,9 @@ class BlackjackGame:
         if action == "confirm_create":
             room_name = self.room_menu.room_name_input
             if room_name:
-                # Usar o IP atual como o IP do host
-                host_ip = socket.gethostbyname(socket.gethostname())
+                # Usar a função de detecção de IP local para pegar um IP melhor
+                host_ip = self.network.get_local_ip()
+                print(f"Criando sala com IP: {host_ip}")
                 self.room_client.create_room(room_name, host_ip)
         
         elif action == "back":

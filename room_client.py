@@ -18,8 +18,11 @@ class RoomClient:
     def connect(self):
         """Conecta ao servidor de salas"""
         try:
+            print(f"Tentando conectar ao servidor de salas: {self.server_host}:{self.server_port}")
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.settimeout(10)  # Timeout de 10 segundos para conexão
             self.socket.connect((self.server_host, self.server_port))
+            self.socket.settimeout(30)  # Timeout mais longo após conectar
             self.connected = True
             self.running = True
             
@@ -28,7 +31,12 @@ class RoomClient:
             self.receive_thread.daemon = True
             self.receive_thread.start()
             
+            print("Conectado ao servidor de salas com sucesso")
             return True
+        except socket.timeout:
+            print(f"Timeout ao tentar conectar ao servidor de salas: {self.server_host}")
+            self.connected = False
+            return False
         except Exception as e:
             print(f"Erro ao conectar ao servidor de salas: {e}")
             self.connected = False
@@ -43,6 +51,10 @@ class RoomClient:
         
         if self.socket:
             try:
+                self.socket.shutdown(socket.SHUT_RDWR)
+            except:
+                pass
+            try:
                 self.socket.close()
             except:
                 pass
@@ -50,6 +62,9 @@ class RoomClient:
         self.connected = False
         self.room_id = None
         self.is_host = False
+        
+        # Esperar threads terminarem
+        time.sleep(0.3)
     
     def set_callback(self, callback):
         """Define uma função de callback para processar mensagens recebidas"""
@@ -57,20 +72,61 @@ class RoomClient:
     
     def receive_messages(self):
         """Recebe mensagens do servidor de salas"""
+        buffer = ""
+        
         while self.running and self.connected:
             try:
-                data = self.socket.recv(1024)
+                try:
+                    data = self.socket.recv(1024)
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    print(f"Erro ao receber dados: {e}")
+                    break
+                    
                 if not data:
+                    print("Conexão com o servidor de salas fechada")
                     break
                 
-                message = json.loads(data.decode('utf-8'))
+                # Adicionar dados ao buffer
+                try:
+                    buffer += data.decode('utf-8')
+                except UnicodeDecodeError:
+                    print("Erro ao decodificar dados")
+                    buffer = ""
+                    continue
                 
-                # Processar mensagem
-                if self.callback:
-                    self.callback(message)
+                # Processar mensagens no buffer
+                try:
+                    message = json.loads(buffer)
+                    buffer = ""
+                    
+                    # Processar mensagem
+                    if self.callback:
+                        self.callback(message)
+                except json.JSONDecodeError as e:
+                    if "Extra data" in str(e):
+                        # Processar primeira mensagem completa
+                        pos = e.pos
+                        try:
+                            first_json = buffer[:pos]
+                            message = json.loads(first_json)
+                            if self.callback:
+                                self.callback(message)
+                            buffer = buffer[pos:]
+                        except:
+                            buffer = ""
+                    elif len(buffer) > 4096:
+                        # Buffer muito grande, provavelmente corrompido
+                        buffer = ""
+                    # Se for outro erro, provavelmente é um JSON incompleto
+                    # então mantemos no buffer
+                except Exception as e:
+                    print(f"Erro ao processar mensagem: {e}")
+                    buffer = ""
                 
             except Exception as e:
-                print(f"Erro ao receber mensagem: {e}")
+                print(f"Erro na thread de recebimento: {e}")
                 break
         
         if self.running:
@@ -84,7 +140,8 @@ class RoomClient:
             return False
         
         try:
-            self.socket.sendall(json.dumps(message).encode('utf-8'))
+            data = json.dumps(message).encode('utf-8')
+            self.socket.sendall(data)
             return True
         except Exception as e:
             print(f"Erro ao enviar mensagem: {e}")
