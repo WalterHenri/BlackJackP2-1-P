@@ -44,11 +44,11 @@ class NetworkManager:
                 self.game.game_state = GameState.WAITING
             else:
                 print("Conectado ao host via relay!")
-                self.game.game_state = GameState.PLAYING
-                self.relay_connected = True
+                self.game.game_state = GameState.WAITING  # Cliente também espera confirmação
                 
-                # Cliente já pode distribuir cartas
-                self.game.deal_initial_cards()
+                # Enviar handshake
+                handshake_msg = {'type': 'handshake', 'client': 'ready'}
+                self.send_message(handshake_msg)
             
             return True
         
@@ -73,6 +73,9 @@ class NetworkManager:
                     self.connection_thread = threading.Thread(target=self.wait_for_connection)
                     self.connection_thread.daemon = True
                     self.connection_thread.start()
+                    
+                    # Host aguarda na tela de espera
+                    self.game.game_state = GameState.WAITING
                 except Exception as e:
                     print(f"Failed to host: {e}")
                     self.close_connection()
@@ -86,23 +89,23 @@ class NetworkManager:
                         self.is_connected = True
                         print("Connected to host!")
                         
-                        # Enviar mensagem de confirmação
+                        # Cliente aguarda na tela de espera
+                        self.game.game_state = GameState.WAITING
+                        
+                        # Enviar handshake
                         try:
                             handshake_msg = {'type': 'handshake', 'client': 'ready'}
                             self.send_message(handshake_msg)
                         except Exception as e:
                             print(f"Erro no handshake: {e}")
+                            self.close_connection()
+                            self.game.game_state = GameState.MENU
+                            return
                         
                         # Start receiving messages
                         self.receive_thread = threading.Thread(target=self.receive_messages)
                         self.receive_thread.daemon = True
                         self.receive_thread.start()
-                        
-                        # Start the game
-                        self.game.game_state = GameState.PLAYING
-                        
-                        # Distribuir as cartas iniciais para o cliente também
-                        self.game.deal_initial_cards()
                     except socket.timeout:
                         print("Connection attempt timed out")
                         self.close_connection()
@@ -159,16 +162,18 @@ class NetworkManager:
                     handshake = json.loads(data.decode('utf-8'))
                     if handshake.get('type') == 'handshake' and handshake.get('client') == 'ready':
                         print("Handshake recebido com sucesso")
+                        # Enviar confirmação de handshake para o cliente
+                        self.send_message({'type': 'handshake_ack', 'host': 'ready'})
+                        # Agora sim iniciar o jogo
+                        self.game.game_state = GameState.PLAYING
+                        # Distribuir cartas iniciais
+                        self.game.deal_initial_cards()
                     else:
-                        print("Handshake inválido, mas continuando")
+                        print("Handshake inválido")
+                        return
             except Exception as e:
-                print(f"Erro no handshake, mas continuando: {e}")
-            
-            # Iniciar o jogo
-            self.game.game_state = GameState.PLAYING
-            
-            # Distribuir cartas iniciais
-            self.game.deal_initial_cards()
+                print(f"Erro no handshake: {e}")
+                return
             
             # Iniciar thread de recebimento de mensagens
             self.receive_thread = threading.Thread(target=self.receive_messages)
@@ -178,7 +183,6 @@ class NetworkManager:
         except socket.timeout:
             print("Accept timed out, still waiting...")
             if self.running:
-                # Não usar recursão para evitar stack overflow
                 pass
         except OSError as e:
             print(f"Error in wait_for_connection: {e}")
@@ -377,15 +381,17 @@ class NetworkManager:
             self.game.game_state = GameState.MENU
     
     def send_game_state(self, player):
+        """Envia o estado atual do jogador para o outro jogador"""
         if not player:
             return
-            
+        
         try:
             hand_data = [{'value': card.value, 'suit': card.suit} for card in player.hand]
             message = {
                 'type': 'game_state',
                 'hand': hand_data,
-                'status': player.status
+                'status': player.status,
+                'score': player.get_score() if hasattr(player, 'get_score') else 0
             }
             self.send_message(message)
         except Exception as e:
@@ -425,3 +431,62 @@ class NetworkManager:
         # Aguardar término dos threads
         if old_running:
             time.sleep(0.5)  # Dar tempo para os threads terminarem 
+
+    def handle_message(self, message):
+        """Processa mensagens recebidas do outro jogador"""
+        msg_type = message.get('type')
+        
+        if msg_type == 'handshake_ack' and message.get('host') == 'ready':
+            # Recebeu confirmação do handshake do host
+            print("Handshake confirmado pelo host")
+            self.game.game_state = GameState.PLAYING
+            # Distribuir cartas iniciais para o cliente
+            self.game.deal_initial_cards()
+        elif msg_type == 'game_state':
+            # Atualizar estado do jogo do outro jogador
+            if 'hand' in message:
+                self.game.remote_player.hand = [Card(card_data['value'], card_data['suit']) for card_data in message['hand']]
+            if 'status' in message:
+                self.game.remote_player.status = message['status']
+        elif msg_type == 'host_left':
+            # Host saiu do jogo
+            print("O host saiu do jogo")
+            self.close_connection()
+            self.game.game_state = GameState.MENU
+        elif msg_type == 'client_left':
+            # Cliente saiu do jogo
+            print("O cliente saiu do jogo")
+            self.close_connection()
+            self.game.game_state = GameState.MENU
+        elif msg_type == 'restart_game':
+            # Reiniciar o jogo
+            self.game.deck = Deck()
+            self.game.local_player = Player("You")
+            self.game.remote_player = Player("Opponent")
+            if not self.is_host:  # Apenas o cliente precisa distribuir cartas aqui
+                self.game.deal_initial_cards()
+        elif msg_type == 'hit':
+            # Outro jogador pediu carta
+            if self.is_host:  # Apenas o host processa hits
+                card = self.game.deck.draw()
+                if card:
+                    self.game.remote_player.hand.append(card)
+                    # Enviar estado atualizado
+                    self.send_game_state(self.game.remote_player)
+        elif msg_type == 'stand':
+            # Outro jogador parou
+            self.game.remote_player.status = "stand"
+
+    def request_hit(self):
+        """Solicita uma nova carta ao host"""
+        if not self.is_host:
+            self.send_message({'type': 'hit'})
+
+    def send_stand(self):
+        """Informa que o jogador parou"""
+        self.send_message({'type': 'stand'})
+
+    def send_restart_game(self):
+        """Solicita reinício do jogo"""
+        if self.is_host:
+            self.send_message({'type': 'restart_game'}) 
