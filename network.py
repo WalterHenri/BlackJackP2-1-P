@@ -209,6 +209,11 @@ class NetworkManager:
             if self.is_host and message_data.get('client') == 'ready':
                 print("Handshake cliente recebido via relay")
                 self.relay_connected = True
+                # Enviar confirmação de handshake para o cliente
+                self.send_message({'type': 'handshake_ack', 'host': 'ready'})
+                # Mudar para a tela de jogo e iniciar
+                self.game.game_state = GameState.PLAYING
+                self.game.deal_initial_cards()
         
         elif message_data.get('type') == 'game_state':
             # Estado do jogo do outro jogador (mão, status)
