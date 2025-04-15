@@ -29,13 +29,20 @@ class NetworkManager:
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.socket.settimeout(30)  # 30 segundos de timeout
+            
+            # Definir timeout para operações de socket
+            if is_host:
+                self.socket.settimeout(60)  # Timeout mais longo para hospedagem
+            else:
+                self.socket.settimeout(10)  # Timeout curto para conexão cliente
             
             if is_host:
                 try:
                     self.socket.bind(('0.0.0.0', 5000))
                     self.socket.listen(1)
                     print("Waiting for opponent to connect...")
+                    
+                    # Iniciar thread de aceitação de conexão
                     self.connection_thread = threading.Thread(target=self.wait_for_connection)
                     self.connection_thread.daemon = True
                     self.connection_thread.start()
@@ -46,10 +53,18 @@ class NetworkManager:
             else:
                 if peer_address:
                     try:
+                        print(f"Tentando conectar ao host: {peer_address}")
                         self.socket.connect((peer_address, 5000))
                         self.peer_socket = self.socket
                         self.is_connected = True
                         print("Connected to host!")
+                        
+                        # Enviar mensagem de confirmação
+                        try:
+                            handshake_msg = {'type': 'handshake', 'client': 'ready'}
+                            self.send_message(handshake_msg)
+                        except Exception as e:
+                            print(f"Erro no handshake: {e}")
                         
                         # Start receiving messages
                         self.receive_thread = threading.Thread(target=self.receive_messages)
@@ -85,39 +100,62 @@ class NetworkManager:
             return
             
         try:
-            # Configurar o socket para aceitar conexões com timeout
+            # Verificar se o socket ainda é válido
+            if not self.running or not self.socket:
+                return
+                
+            # Configurar o socket para aceitar conexões
             self.socket.settimeout(None)  # sem timeout para accept()
             
-            if self.running:
-                client_socket, addr = self.socket.accept()
+            # Tentar aceitar conexão
+            print("Aguardando conexão do cliente...")
+            client_socket, addr = self.socket.accept()
+            
+            # Verificar se ainda estamos rodando após accept
+            if not self.running:
+                try:
+                    client_socket.close()
+                except:
+                    pass
+                return
                 
-                if not self.running:  # Verificar novamente após accept() que pode ter bloqueado
-                    try:
-                        client_socket.close()
-                    except:
-                        pass
-                    return
-                    
-                client_socket.settimeout(5.0)  # 5 segundos de timeout para operações de socket do cliente
-                self.peer_socket = client_socket
-                self.is_connected = True
-                print(f"Client connected from {addr}")
-                
-                # Start the game
-                self.game.game_state = GameState.PLAYING
-                
-                # Start dealing initial cards
-                self.game.deal_initial_cards()
-                
-                # Start receiving messages
-                self.receive_messages()
+            # Configurar o socket do cliente
+            client_socket.settimeout(5.0)
+            self.peer_socket = client_socket
+            self.is_connected = True
+            print(f"Client connected from {addr}")
+            
+            # Aguardar mensagem de handshake antes de iniciar o jogo
+            try:
+                data = client_socket.recv(1024)
+                if data:
+                    handshake = json.loads(data.decode('utf-8'))
+                    if handshake.get('type') == 'handshake' and handshake.get('client') == 'ready':
+                        print("Handshake recebido com sucesso")
+                    else:
+                        print("Handshake inválido, mas continuando")
+            except Exception as e:
+                print(f"Erro no handshake, mas continuando: {e}")
+            
+            # Iniciar o jogo
+            self.game.game_state = GameState.PLAYING
+            
+            # Distribuir cartas iniciais
+            self.game.deal_initial_cards()
+            
+            # Iniciar thread de recebimento de mensagens
+            self.receive_thread = threading.Thread(target=self.receive_messages)
+            self.receive_thread.daemon = True
+            self.receive_thread.start()
+            
         except socket.timeout:
             print("Accept timed out, still waiting...")
             if self.running:
-                self.wait_for_connection()  # Tentar novamente
+                # Não usar recursão para evitar stack overflow
+                pass
         except OSError as e:
             print(f"Error in wait_for_connection: {e}")
-            if self.running:
+            if self.running and self.socket:
                 self.game.game_state = GameState.MENU
         except Exception as e:
             print(f"Unexpected error in wait_for_connection: {e}")
@@ -129,7 +167,14 @@ class NetworkManager:
             return False
             
         try:
-            data = json.dumps(message).encode('utf-8')
+            # Conversão para JSON com tratamento de erros
+            try:
+                data = json.dumps(message).encode('utf-8')
+            except Exception as e:
+                print(f"Error encoding JSON: {e}")
+                return False
+                
+            # Enviar dados
             self.peer_socket.sendall(data)
             return True
         except ConnectionResetError:
@@ -154,37 +199,72 @@ class NetworkManager:
         while self.running and self.is_connected:
             try:
                 if not self.peer_socket:
+                    print("Socket inválido, encerrando recebimento")
                     break
                 
-                # Receber dados com um buffer
-                data = self.peer_socket.recv(1024)
+                # Receber dados
+                try:
+                    data = self.peer_socket.recv(1024)
+                except socket.timeout:
+                    continue
+                except ConnectionResetError:
+                    print("Connection reset during receive")
+                    break
+                except Exception as e:
+                    print(f"Error receiving data: {e}")
+                    break
+                    
                 if not data:
                     print("No data received, connection closed")
                     break
                 
-                # Adicionar ao buffer e processar mensagens completas
-                buffer += data.decode('utf-8')
-                
-                # Processar todas as mensagens no buffer
+                # Decodificar dados
                 try:
-                    message = json.loads(buffer)
-                    self.game.handle_message(message)
-                    buffer = ""  # Limpar buffer após processamento bem-sucedido
-                except json.JSONDecodeError:
-                    # O buffer não contém uma mensagem JSON completa ainda, ou é inválido
-                    pass
-                except Exception as e:
-                    print(f"Error processing message: {e}")
-                    buffer = ""  # Limpar buffer em caso de erro
+                    decoded_data = data.decode('utf-8')
+                    buffer += decoded_data
+                except UnicodeDecodeError as e:
+                    print(f"Error decoding data: {e}")
+                    buffer = ""  # Reset buffer on decode error
+                    continue
                 
-            except socket.timeout:
-                # Timeout é normal, continuar o loop
-                continue
-            except ConnectionResetError:
-                print("Connection was reset by peer")
-                break
+                # Processar JSON do buffer
+                while buffer:
+                    try:
+                        # Tentar carregar o JSON completo
+                        message = json.loads(buffer)
+                        self.game.handle_message(message)
+                        buffer = ""  # Limpar buffer após processamento
+                        break
+                    except json.JSONDecodeError as e:
+                        # Verificar se o erro é por dados incompletos ou inválidos
+                        if "Extra data" in str(e):
+                            # Dados extras no buffer - encontrar o fim do primeiro JSON
+                            pos = e.pos
+                            try:
+                                # Processar primeiro JSON e manter o resto no buffer
+                                first_json = buffer[:pos]
+                                message = json.loads(first_json)
+                                self.game.handle_message(message)
+                                buffer = buffer[pos:]  # Manter o resto para o próximo ciclo
+                            except:
+                                # Se falhar, descartar o buffer
+                                print("Error processing partial JSON, discarding buffer")
+                                buffer = ""
+                        elif "Expecting value" in str(e) and len(buffer) < 1024:
+                            # Provavelmente JSON incompleto, manter buffer e aguardar mais dados
+                            break
+                        else:
+                            # JSON inválido, descartar buffer
+                            print(f"Invalid JSON in buffer: {e}")
+                            buffer = ""
+                            break
+                    except Exception as e:
+                        print(f"Error processing message: {e}")
+                        buffer = ""
+                        break
+                
             except Exception as e:
-                print(f"Error receiving message: {e}")
+                print(f"Error in receive loop: {e}")
                 break
         
         # Se saímos do loop, a conexão foi perdida
@@ -211,20 +291,24 @@ class NetworkManager:
             print(f"Error sending game state: {e}")
     
     def close_connection(self):
-        # Marcar como não executando para parar os threads
+        # Marcar como não executando para parar threads
+        old_running = self.running
         self.running = False
         self.is_connected = False
         
-        # Fechar socket do peer
+        # Fechar socket do peer (cliente conectado)
         if self.peer_socket and self.peer_socket != self.socket:
             try:
                 self.peer_socket.shutdown(socket.SHUT_RDWR)
+            except:
+                pass
+            try:
                 self.peer_socket.close()
             except:
                 pass
             self.peer_socket = None
         
-        # Fechar socket principal
+        # Fechar socket principal (servidor/cliente principal)
         if self.socket:
             try:
                 self.socket.shutdown(socket.SHUT_RDWR)
@@ -236,5 +320,6 @@ class NetworkManager:
                 pass
             self.socket = None
         
-        # Esperar que os threads terminem
-        time.sleep(0.2)  # Pequena pausa para os threads terminarem 
+        # Aguardar término dos threads
+        if old_running:
+            time.sleep(0.5)  # Dar tempo para os threads terminarem 
